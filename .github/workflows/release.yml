@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the manifest version matches the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest=$(python -c "import json;print(json.load(open('custom_components/ai_pool/manifest.json'))['version'])")
+          echo "tag=$tag manifest=$manifest"
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::Tag $tag does not match manifest version $manifest"
+            exit 1
+          fi
+
+      - name: Build the HACS zip
+        run: |
+          cd custom_components/ai_pool
+          zip -r ../../ai_pool.zip . -x '*__pycache__*'
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ai_pool.zip
+          generate_release_notes: true

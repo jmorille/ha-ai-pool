@@ -1,0 +1,78 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add an AI pool",
+        "description": "A pool publishes one entity that routes calls across several providers.",
+        "data": {
+          "name": "Name",
+          "pool_type": "Pool type"
+        }
+      },
+      "members": {
+        "title": "Members and policy",
+        "description": "Members are tried in the order the strategy decides. A failing member is skipped and the next one is tried.",
+        "data": {
+          "members": "Members",
+          "strategy": "Selection strategy",
+          "cooldown_seconds": "Cooldown after a capacity refusal",
+          "max_attempts": "Maximum members tried per call"
+        }
+      },
+      "limits": {
+        "title": "Daily allowances",
+        "description": "Declared allowance per member for {members}. Use 0 when there is no known limit. Providers do not report remaining quota, so these numbers only steer the rotation — a real refusal is always detected from the error.",
+        "data": {}
+      }
+    },
+    "error": {
+      "no_members": "Pick at least one member."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Members and policy",
+        "description": "The pool type cannot be changed after creation.",
+        "data": {
+          "members": "Members",
+          "strategy": "Selection strategy",
+          "cooldown_seconds": "Cooldown after a capacity refusal",
+          "max_attempts": "Maximum members tried per call"
+        }
+      },
+      "limits": {
+        "title": "Daily allowances",
+        "description": "Declared allowance per member for {members}. Use 0 when there is no known limit.",
+        "data": {}
+      }
+    },
+    "error": {
+      "no_members": "Pick at least one member."
+    }
+  },
+  "selector": {
+    "pool_type": {
+      "options": {
+        "ai_task": "AI Task",
+        "conversation": "Conversation agent",
+        "tts": "Text to speech",
+        "stt": "Speech to text"
+      }
+    },
+    "strategy": {
+      "options": {
+        "round_robin": "Round robin (alternate on every call)",
+        "least_used": "Least used (most allowance left first)",
+        "priority": "Priority (always try in order)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "member_calls": {
+        "name": "{member} calls"
+      }
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ajouter un pool IA",
+        "description": "Un pool publie une entite unique qui repartit les appels entre plusieurs fournisseurs.",
+        "data": {
+          "name": "Nom",
+          "pool_type": "Type de pool"
+        }
+      },
+      "members": {
+        "title": "Membres et politique",
+        "description": "Les membres sont essayes dans l'ordre decide par la strategie. Un membre en echec est ecarte et le suivant est essaye.",
+        "data": {
+          "members": "Membres",
+          "strategy": "Strategie de selection",
+          "cooldown_seconds": "Mise a l'ecart apres un refus de capacite",
+          "max_attempts": "Nombre maximal de membres essayes par appel"
+        }
+      },
+      "limits": {
+        "title": "Quotas journaliers",
+        "description": "Quota declare par membre pour {members}. Mettre 0 quand la limite est inconnue. Les fournisseurs n'exposent pas leur quota restant : ces valeurs ne servent qu'a orienter la rotation, un refus reel est toujours detecte a partir de l'erreur.",
+        "data": {}
+      }
+    },
+    "error": {
+      "no_members": "Choisir au moins un membre."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Membres et politique",
+        "description": "Le type de pool n'est pas modifiable apres la creation.",
+        "data": {
+          "members": "Membres",
+          "strategy": "Strategie de selection",
+          "cooldown_seconds": "Mise a l'ecart apres un refus de capacite",
+          "max_attempts": "Nombre maximal de membres essayes par appel"
+        }
+      },
+      "limits": {
+        "title": "Quotas journaliers",
+        "description": "Quota declare par membre pour {members}. Mettre 0 quand la limite est inconnue.",
+        "data": {}
+      }
+    },
+    "error": {
+      "no_members": "Choisir au moins un membre."
+    }
+  },
+  "selector": {
+    "pool_type": {
+      "options": {
+        "ai_task": "Tache IA",
+        "conversation": "Agent conversationnel",
+        "tts": "Synthese vocale",
+        "stt": "Reconnaissance vocale"
+      }
+    },
+    "strategy": {
+      "options": {
+        "round_robin": "Tourniquet (alterner a chaque appel)",
+        "least_used": "Moins utilise (le plus de quota restant d'abord)",
+        "priority": "Priorite (toujours dans l'ordre)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "member_calls": {
+        "name": "Appels {member}"
+      }
+    }
+  }
+}
