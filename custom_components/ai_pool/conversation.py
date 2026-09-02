@@ -5,6 +5,7 @@ from __future__ import annotations
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -56,10 +57,9 @@ class AIPoolConversationEntity(AIPoolEntity, conversation.ConversationEntity):
                 # A member that answers with an error still counts as a failure,
                 # otherwise the pool would happily return "sorry" from the first
                 # broken member and never reach a working one.
-                raise conversation.ConverseError(
-                    result.response.speech.get("plain", {}).get(
-                        "speech", "member returned an error response"
-                    ),
+                speech = result.response.speech.get("plain", {}).get("speech", "")
+                raise HomeAssistantError(
+                    f"conversation member {member} returned an error response: {speech}"
                 )
             return result
 

@@ -337,3 +337,16 @@ async def test_last_error_is_recorded_with_its_kind(
     rows = {row["entity_id"]: row for row in pool.snapshot()}
     assert rows[A]["last_error"].startswith("capacity:")
     assert rows[B]["last_success"] is not None
+
+
+async def test_member_with_unknown_state_is_healthy(hass: HomeAssistant) -> None:
+    """A member not called since startup reports "unknown", not unavailable.
+
+    ai_task, conversation, tts and stt entities all publish their last activity
+    as their state, so "unknown" is simply a member nobody has used yet.
+    """
+    hass.states.async_set(A, "unknown")
+    pool = await make_pool(hass, build_entry([A]))
+
+    rows = {row["entity_id"]: row for row in pool.snapshot()}
+    assert rows[A]["status"] == STATUS_HEALTHY

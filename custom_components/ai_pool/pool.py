@@ -45,7 +45,11 @@ _LOGGER = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-UNAVAILABLE_STATES = frozenset({"unavailable", "unknown"})
+# Only "unavailable" means unusable. "unknown" is the resting state of every
+# ai_task, conversation, tts and stt entity, whose state is the timestamp of
+# their last activity: treating it as unusable would demote every member the
+# instance has not called since it started.
+UNAVAILABLE_STATES = frozenset({"unavailable"})
 
 
 class AllMembersFailedError(HomeAssistantError):

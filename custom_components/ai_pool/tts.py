@@ -86,7 +86,10 @@ class AIPoolTTSEntity(AIPoolEntity, tts.TextToSpeechEntity):
                 engine=member,
                 language=language,
                 options=options,
-                cache=None,
+                # The manager already caches the pool's own output according to
+                # what the caller asked for; caching the member's copy as well
+                # would store the same audio twice.
+                cache=False,
             )
             return await tts.async_get_media_source_audio(self.hass, media_source_id)
 
