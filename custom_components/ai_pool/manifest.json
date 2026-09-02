@@ -1,9 +1,9 @@
 {
   "domain": "ai_pool",
   "name": "AI Pool",
+  "after_dependencies": ["ai_task", "conversation", "stt", "tts"],
   "codeowners": ["@jmorille"],
   "config_flow": true,
-  "dependencies": ["ai_task", "conversation", "stt", "tts"],
   "documentation": "https://github.com/jmorille/ha-ai-pool",
   "integration_type": "service",
   "iot_class": "local_push",

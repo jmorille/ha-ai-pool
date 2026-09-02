@@ -259,7 +259,7 @@ class AIPool:
             if attempts >= self.max_attempts:
                 break
             attempts += 1
-            state = self.store.state.member(member.entity_id)
+            state = self.store.touch(member.entity_id)
             try:
                 result = await run(member.entity_id)
             except Exception as err:
@@ -278,7 +278,6 @@ class AIPool:
                 continue
 
             state.calls += 1
-            state.day = self.store.today()
             state.last_success = dt_util.utcnow().isoformat()
             state.cooldown_until = None
             await self.store.async_save()

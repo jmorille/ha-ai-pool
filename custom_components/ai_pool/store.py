@@ -104,6 +104,17 @@ class UsageStore:
         moment = now or dt_util.now()
         return dt_util.as_local(moment).date().isoformat()
 
+    def touch(self, key: str, now: datetime | None = None) -> MemberState:
+        """Return a member's state, stamped with the current quota window.
+
+        Stamping when the member is picked, rather than when it succeeds,
+        matters: an unstamped state looks like it belongs to an earlier day,
+        so the next day roll would erase the failure just recorded against it.
+        """
+        state = self.state.member(key)
+        state.day = self.today(now)
+        return state
+
     def roll_day(self, now: datetime | None = None) -> bool:
         """Zero counters whose stored day is not today. Returns True if rolled."""
         current = self.today(now)
