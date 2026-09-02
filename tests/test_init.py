@@ -44,6 +44,16 @@ def build_entry(pool_type: str) -> MockConfigEntry:
     )
 
 
+@pytest.fixture(autouse=True)
+async def setup_core(hass: HomeAssistant) -> None:
+    """Set up the core integration the fronted domains rely on.
+
+    conversation reads the exposed-entity registry owned by the homeassistant
+    component, which a real instance always has and a test one does not.
+    """
+    assert await async_setup_component(hass, "homeassistant", {})
+
+
 @pytest.mark.parametrize("pool_type", ["ai_task", "conversation", "tts", "stt"])
 async def test_setup_and_unload(hass: HomeAssistant, pool_type: str) -> None:
     """Every pool type loads its own platform plus the sensors."""
