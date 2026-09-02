@@ -372,6 +372,8 @@ async def test_tts_pool_advertises_the_union_of_member_languages(
     pool_entity = hass.data[tts.DATA_COMPONENT].get_entity("tts.test_pool")
     assert pool_entity is not None
     assert sorted(pool_entity.supported_languages) == ["de", "en", "fr"]
+    # The tts manager refuses an engine whose name is None.
+    assert pool_entity.name == TITLE
 
 
 # --- stt --------------------------------------------------------------------

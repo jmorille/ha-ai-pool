@@ -13,8 +13,6 @@ from .pool import AIPool
 class AIPoolEntity(Entity):
     """Common identity and device grouping for every pool entity."""
 
-    _attr_has_entity_name = True
-    _attr_name = None
     _attr_should_poll = False
 
     def __init__(self, pool: AIPool, entry: ConfigEntry) -> None:
@@ -22,6 +20,11 @@ class AIPoolEntity(Entity):
         self.pool = pool
         self._entry = entry
         self._attr_unique_id = entry.entry_id
+        # Named explicitly rather than borrowing the device name through
+        # has_entity_name: the tts manager reads entity.name directly and
+        # refuses an engine whose name is None, which is what the device-name
+        # convention leaves it as.
+        self._attr_name = entry.title
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
