@@ -152,8 +152,17 @@ Linux and macOS**. On Windows the provider-independent tests still run:
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/test_errors.py tests/test_strategies.py -q --noconftest
 ```
 
-CI runs the full suite on Ubuntu against Python 3.14, plus `hassfest`
-and HACS validation.
+CI runs the full suite on Ubuntu against every supported Home Assistant
+version, plus `hassfest` and HACS validation. The harness pins one Home
+Assistant version per release, so the matrix selects versions by harness
+version; `scripts/component_requirements.py` then reads the fronted components'
+own dependencies from the installed manifests, which keeps them right across
+those versions.
+
+### Supported Home Assistant versions
+
+Tested against **2026.8.3** and **2026.9.0**. 2026.8.3 is the minimum declared
+in `hacs.json`; older versions are untested rather than known-broken.
 
 ### Releasing
 

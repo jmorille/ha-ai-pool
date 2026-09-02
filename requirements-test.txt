@@ -1,12 +1,2 @@
 -r requirements-lint.txt
 pytest-homeassistant-custom-component==0.13.362
-
-# Requirements of the Home Assistant components the pools front. The test
-# harness installs Home Assistant but not the components' own dependencies,
-# and a component that cannot start makes its platform untestable.
-mutagen==1.48.1            # tts
-ha-ffmpeg==3.2.2           # ffmpeg, pulled in by tts
-hassil==3.12.0             # conversation
-home-assistant-intents==2026.8.28  # conversation
-gazetteer-matcher==1.1.0   # conversation
-PyTurboJPEG==1.8.3         # camera, pulled in by ai_task

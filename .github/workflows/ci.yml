@@ -28,23 +28,32 @@ jobs:
         run: ruff format --check custom_components tests
 
   test:
-    name: Tests (py${{ matrix.python-version }})
+    name: Tests (HA ${{ matrix.ha }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # pytest-homeassistant-custom-component requires Python 3.14, which
-        # tracks the interpreter Home Assistant itself now runs on.
-        python-version: ["3.14"]
+        # Each harness release pins exactly one Home Assistant version, so the
+        # harness version is how a Home Assistant version gets tested. The
+        # oldest entry here is what hacs.json declares as the minimum.
+        include:
+          - ha: "2026.8.3"
+            harness: "0.13.357"
+          - ha: "2026.9.0"
+            harness: "0.13.362"
+            coverage: true
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
       - name: Install
         run: |
           pip install --upgrade pip
-          pip install -r requirements-test.txt
+          pip install "pytest-homeassistant-custom-component==${{ matrix.harness }}"
+          python scripts/component_requirements.py > component-requirements.txt
+          cat component-requirements.txt
+          pip install -r component-requirements.txt
       - name: Test
         run: |
           pytest tests \
@@ -53,7 +62,7 @@ jobs:
             --cov-report=xml \
             -q
       - name: Upload coverage
-        if: matrix.python-version == '3.14'
+        if: matrix.coverage
         uses: actions/upload-artifact@v4
         with:
           name: coverage
