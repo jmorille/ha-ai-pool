@@ -152,7 +152,7 @@ Linux and macOS**. On Windows the provider-independent tests still run:
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/test_errors.py tests/test_strategies.py -q --noconftest
 ```
 
-CI runs the full suite on Ubuntu against Python 3.13 and 3.14, plus `hassfest`
+CI runs the full suite on Ubuntu against Python 3.14, plus `hassfest`
 and HACS validation.
 
 ### Releasing

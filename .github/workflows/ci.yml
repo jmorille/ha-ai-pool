@@ -18,8 +18,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
-      - run: pip install -r requirements-test.txt
+          python-version: "3.14"
+      # Linting needs ruff only; installing the Home Assistant test harness
+      # here would add minutes for nothing.
+      - run: pip install -r requirements-lint.txt
       - name: Lint
         run: ruff check custom_components tests
       - name: Format check
@@ -31,7 +33,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.13", "3.14"]
+        # pytest-homeassistant-custom-component requires Python 3.14, which
+        # tracks the interpreter Home Assistant itself now runs on.
+        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -49,7 +53,7 @@ jobs:
             --cov-report=xml \
             -q
       - name: Upload coverage
-        if: matrix.python-version == '3.13'
+        if: matrix.python-version == '3.14'
         uses: actions/upload-artifact@v4
         with:
           name: coverage
