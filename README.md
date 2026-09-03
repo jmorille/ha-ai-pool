@@ -223,8 +223,10 @@ those versions.
 
 ### Supported Home Assistant versions
 
-Tested against **2026.8.3** and **2026.9.0**. 2026.8.3 is the minimum declared
-in `hacs.json`; older versions are untested rather than known-broken.
+Requires **2026.9.0** or newer, which is both the minimum declared in
+`hacs.json` and the version CI tests against. Earlier versions are not
+supported: 2026.8.3 was, and the code still avoids nothing on its account, but
+it is no longer tested and no longer installable through HACS.
 
 ### Releasing
 

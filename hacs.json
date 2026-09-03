@@ -2,7 +2,7 @@
   "name": "AI Pool",
   "content_in_root": false,
   "render_readme": true,
-  "homeassistant": "2026.8.3",
+  "homeassistant": "2026.9.0",
   "zip_release": true,
   "filename": "ai_pool.zip"
 }

@@ -35,10 +35,9 @@ jobs:
       matrix:
         # Each harness release pins exactly one Home Assistant version, so the
         # harness version is how a Home Assistant version gets tested. The
-        # oldest entry here is what hacs.json declares as the minimum.
+        # oldest entry here is what hacs.json declares as the minimum; add a
+        # newer one alongside it to test a version before raising the floor.
         include:
-          - ha: "2026.8.3"
-            harness: "0.13.357"
           - ha: "2026.9.0"
             harness: "0.13.362"
             coverage: true
