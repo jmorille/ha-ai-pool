@@ -11,6 +11,7 @@ from custom_components.ai_pool.const import (
     CONF_MAX_ATTEMPTS,
     CONF_MEMBERS,
     CONF_POOL_TYPE,
+    CONF_RPM_LIMIT,
     CONF_STRATEGY,
     CONF_WEIGHT,
     DOMAIN,
@@ -49,8 +50,10 @@ async def test_full_flow_creates_a_pool(hass: HomeAssistant) -> None:
         result["flow_id"],
         {
             f"limit_{A}": 250,
+            f"rpm_{A}": 10,
             f"weight_{A}": 1,
             f"limit_{B}": 250,
+            f"rpm_{B}": 15,
             f"weight_{B}": 2,
         },
     )
@@ -61,8 +64,18 @@ async def test_full_flow_creates_a_pool(hass: HomeAssistant) -> None:
     assert data[CONF_POOL_TYPE] == "ai_task"
     assert data[CONF_STRATEGY] == STRATEGY_ROUND_ROBIN
     assert data[CONF_MEMBERS] == [
-        {"entity_id": A, CONF_DAILY_LIMIT: 250, CONF_WEIGHT: 1},
-        {"entity_id": B, CONF_DAILY_LIMIT: 250, CONF_WEIGHT: 2},
+        {
+            "entity_id": A,
+            CONF_DAILY_LIMIT: 250,
+            CONF_RPM_LIMIT: 10,
+            CONF_WEIGHT: 1,
+        },
+        {
+            "entity_id": B,
+            CONF_DAILY_LIMIT: 250,
+            CONF_RPM_LIMIT: 15,
+            CONF_WEIGHT: 2,
+        },
     ]
     # The name is the entry title, not a config value.
     assert "name" not in data
@@ -124,8 +137,10 @@ async def test_options_flow_updates_members_and_policy(
         result["flow_id"],
         {
             f"limit_{A}": 100,
+            f"rpm_{A}": 0,
             f"weight_{A}": 1,
             f"limit_{B}": 500,
+            f"rpm_{B}": 5,
             f"weight_{B}": 3,
         },
     )
@@ -149,7 +164,14 @@ async def test_options_flow_keeps_existing_limits_as_defaults(
             CONF_STRATEGY: STRATEGY_ROUND_ROBIN,
             CONF_COOLDOWN: 300,
             CONF_MAX_ATTEMPTS: 3,
-            CONF_MEMBERS: [{"entity_id": A, CONF_DAILY_LIMIT: 777, CONF_WEIGHT: 4}],
+            CONF_MEMBERS: [
+                {
+                    "entity_id": A,
+                    CONF_DAILY_LIMIT: 777,
+                    CONF_RPM_LIMIT: 12,
+                    CONF_WEIGHT: 4,
+                }
+            ],
         },
     )
     entry.add_to_hass(hass)
@@ -166,4 +188,5 @@ async def test_options_flow_keeps_existing_limits_as_defaults(
     )
     schema_keys = {str(key): key for key in result["data_schema"].schema}
     assert schema_keys[f"limit_{A}"].default() == 777
+    assert schema_keys[f"rpm_{A}"].default() == 12
     assert schema_keys[f"weight_{A}"].default() == 4
