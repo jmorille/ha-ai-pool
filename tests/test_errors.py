@@ -77,8 +77,16 @@ def test_auth_is_permanent() -> None:
     assert verdict.is_permanent is True
 
 
-def test_timeout_exception_is_transient() -> None:
-    assert classify(TimeoutError()).kind is FailureKind.TRANSIENT
+def test_timeout_exception_has_its_own_kind() -> None:
+    """A deadline we imposed is a different diagnosis from a provider error.
+
+    Both are retryable and neither earns a cooldown, but "too slow for us" and
+    "the server broke" call for different fixes, so they are counted apart.
+    """
+    verdict = classify(TimeoutError())
+    assert verdict.kind is FailureKind.TIMEOUT
+    assert verdict.deserves_cooldown is False
+    assert verdict.is_permanent is False
 
 
 def test_exception_instances_are_accepted() -> None:
