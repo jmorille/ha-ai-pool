@@ -140,12 +140,19 @@ class AIPoolCallsSensor(AIPoolMemberSensor):
             return {}
         attributes = {
             "status": row["status"],
+            # Which engine is really behind this member. Two members sharing
+            # one is the failure the pool cannot route around, and a dashboard
+            # is where that is spotted.
+            "model": row["model"],
             "failures_today": row["failures_today"],
             "success_rate": row["success_rate"],
             "daily_limit": row["daily_limit"],
             "remaining": row["remaining"],
             "weight": row["weight"],
             "cooldown_until": row["cooldown_until"],
+            # Consecutive capacity refusals, which is what makes each cooldown
+            # longer than the last.
+            "cooldown_strikes": row["cooldown_strikes"],
             "last_error": row["last_error"],
             "last_success": row["last_success"],
             # Rate-limit tracking. Providers meter requests, and a refusal is

@@ -487,3 +487,29 @@ async def test_strikes_are_reported(hass: HomeAssistant, available) -> None:
         await pool.async_execute(run)
 
     assert pool.snapshot()[0]["cooldown_strikes"] == 1
+
+
+async def test_calls_sensor_carries_model_and_strikes(
+    hass: HomeAssistant, available, monkeypatch
+) -> None:
+    """Both facts are documented as dashboard-visible, so they must be there."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    assert await async_setup_component(hass, "ai_task", {})
+    available(A)
+    monkeypatch.setattr(AIPool, "member_model", lambda self, key: "models/flash")
+
+    entry = build_entry([A])
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    calls = next(
+        entity.entity_id
+        for entity in er.async_entries_for_config_entry(
+            er.async_get(hass), entry.entry_id
+        )
+        if entity.domain == "sensor" and "latence" not in entity.entity_id
+    )
+    attributes = hass.states.get(calls).attributes
+    assert attributes["model"] == "models/flash"
+    assert attributes["cooldown_strikes"] == 0
