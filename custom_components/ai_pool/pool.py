@@ -25,11 +25,13 @@ from .const import (
     CONF_MAX_ATTEMPTS,
     CONF_MEMBERS,
     CONF_POOL_TYPE,
+    CONF_RPM_LIMIT,
     CONF_STRATEGY,
     CONF_WEIGHT,
     DEFAULT_COOLDOWN,
     DEFAULT_DAILY_LIMIT,
     DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_RPM_LIMIT,
     DEFAULT_STRATEGY,
     DEFAULT_WEIGHT,
     STATUS_COOLDOWN,
@@ -73,6 +75,7 @@ class MemberConfig:
 
     entity_id: str
     daily_limit: int = DEFAULT_DAILY_LIMIT
+    rpm_limit: int = DEFAULT_RPM_LIMIT
     weight: int = DEFAULT_WEIGHT
 
     @classmethod
@@ -81,6 +84,7 @@ class MemberConfig:
         return cls(
             entity_id=data["entity_id"],
             daily_limit=int(data.get(CONF_DAILY_LIMIT, DEFAULT_DAILY_LIMIT) or 0),
+            rpm_limit=int(data.get(CONF_RPM_LIMIT, DEFAULT_RPM_LIMIT) or 0),
             weight=int(data.get(CONF_WEIGHT, DEFAULT_WEIGHT) or 1),
         )
 
@@ -189,6 +193,15 @@ class AIPool:
             remaining: int | None = None
             if member.daily_limit:
                 remaining = max(member.daily_limit - state.calls, 0)
+            # Against the provider's own counter, which a refusal also spends,
+            # so this is the pessimistic reading of the same allowance.
+            rpd_remaining: int | None = None
+            if member.daily_limit:
+                rpd_remaining = max(member.daily_limit - state.requests, 0)
+            per_minute = state.requests_last_minute()
+            rpm_remaining: int | None = None
+            if member.rpm_limit:
+                rpm_remaining = max(member.rpm_limit - per_minute, 0)
             result.append(
                 {
                     "entity_id": member.entity_id,
@@ -197,6 +210,13 @@ class AIPool:
                     "failures_today": state.failures,
                     "daily_limit": member.daily_limit or None,
                     "remaining": remaining,
+                    "requests_today": state.requests,
+                    "rpd_remaining": rpd_remaining,
+                    "requests_last_minute": per_minute,
+                    "rpm_limit": member.rpm_limit or None,
+                    "rpm_remaining": rpm_remaining,
+                    "input_chars_today": state.input_chars,
+                    "input_chars_last_minute": state.input_chars_last_minute(),
                     "weight": member.weight,
                     "cooldown_until": state.cooldown_until,
                     "last_error": state.last_error,
@@ -276,12 +296,17 @@ class AIPool:
         run: Callable[[str], Awaitable[T]],
         *,
         description: str = "request",
+        size: int = 0,
     ) -> T:
         """Run ``run`` against pool members until one succeeds.
 
         ``run`` receives a member ``entity_id``. Its exceptions are classified
         to decide whether the member is merely busy, out of allowance, or
         permanently unusable.
+
+        ``size`` is how large the request is in characters. Providers meter
+        input tokens, which Home Assistant never reports back, so the platforms
+        pass what they do know and the metrics call it what it is.
         """
         self.store.roll_day()
         preferred, last_resort = self._candidates()
@@ -302,6 +327,9 @@ class AIPool:
                 break
             attempts += 1
             state = self.store.touch(member.entity_id)
+            # Recorded before the call: the provider charges the request
+            # against its limits when it receives it, not when it answers.
+            state.record_request(size)
             started = time.monotonic()
             try:
                 result = await run(member.entity_id)

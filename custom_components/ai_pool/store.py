@@ -3,14 +3,18 @@
 Counters survive restarts because a quota window does not: Home Assistant
 restarting at 18:00 must not hand a spent member a fresh allowance.
 
-Two kinds of number live here and they behave differently on purpose. Day
-counters (calls, failures, latency aggregates) reset when the local day rolls,
-because that is the window a quota is spent in. The recent-latency ring does
-not: how fast a provider is answering right now is not a question about today.
+Three kinds of number live here and they behave differently on purpose. Day
+counters (calls, failures, requests, latency aggregates) reset when the local
+day rolls, because that is the window a daily quota is spent in. The
+recent-latency ring does not: how fast a provider is answering right now is not
+a question about today. The request log is a rolling window of its own, pruned
+by age rather than by day, because a per-minute limit knows nothing about
+midnight.
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 
@@ -21,6 +25,14 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN, STORAGE_VERSION
 
 RECENT_LATENCY_SAMPLES = 20
+
+# Providers publish per-minute limits, so a minute is the window that has to be
+# measurable. Anything older is pruned: the log answers "how hard am I pushing
+# this member right now", never "what happened this morning".
+RATE_WINDOW_SECONDS = 60.0
+# A hard ceiling on the log, so a runaway caller cannot grow the stored state
+# without bound. Well above any free-tier per-minute allowance.
+MAX_REQUEST_LOG = 200
 
 
 @dataclass
@@ -44,6 +56,50 @@ class MemberState:
     latency_min: float | None = None
     latency_max: float | None = None
     latency_recent: list[float] = field(default_factory=list)
+
+    # --- Rate tracking ------------------------------------------------------
+    # Requests, not calls: a provider counts a request against the limit
+    # whether it answers or refuses, so these move on every attempt while
+    # ``calls`` only moves on success.
+    requests: int = 0
+    input_chars: int = 0
+    # [[unix timestamp, request size in characters], ...] for the last minute.
+    request_log: list[list[float]] = field(default_factory=list)
+
+    def record_request(self, size: int = 0, now: float | None = None) -> None:
+        """Log one attempt against this member, with its input size.
+
+        Called before the request is made, because a limit is spent by asking,
+        not by being answered.
+        """
+        moment = time.time() if now is None else now
+        self.requests += 1
+        self.input_chars += size
+        log = self._window(moment)
+        log.append([moment, float(size)])
+        self.request_log = log[-MAX_REQUEST_LOG:]
+
+    def _window(self, now: float | None = None) -> list[list[float]]:
+        """Entries from the last minute, without mutating the log."""
+        moment = time.time() if now is None else now
+        return [
+            entry
+            for entry in self.request_log
+            if moment - entry[0] < RATE_WINDOW_SECONDS
+        ]
+
+    def requests_last_minute(self, now: float | None = None) -> int:
+        """Observed requests per minute: the RPM dimension, as we see it."""
+        return len(self._window(now))
+
+    def input_chars_last_minute(self, now: float | None = None) -> int:
+        """Input characters sent in the last minute.
+
+        A stand-in for the TPM dimension. Home Assistant hands the integration
+        no token count, so characters are what can honestly be measured; the
+        usual rule of thumb is roughly four characters per token.
+        """
+        return int(sum(entry[1] for entry in self._window(now)))
 
     def record_latency(self, seconds: float) -> None:
         """Record how long a *successful* call took.
@@ -92,10 +148,16 @@ class MemberState:
         return 100.0 * self.calls / attempts
 
     def reset_day(self, day: str) -> None:
-        """Zero the day-scoped counters and stamp the new window."""
+        """Zero the day-scoped counters and stamp the new window.
+
+        The request log survives: it is a one-minute window, and a request made
+        at 23:59:50 still counts against the per-minute limit at 00:00:05.
+        """
         self.day = day
         self.calls = 0
         self.failures = 0
+        self.requests = 0
+        self.input_chars = 0
         self.failures_by_kind = {}
         self.latency_count = 0
         self.latency_total = 0.0

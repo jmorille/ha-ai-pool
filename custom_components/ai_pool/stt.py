@@ -161,4 +161,6 @@ class AIPoolSTTEntity(AIPoolEntity, stt.SpeechToTextEntity):
                 raise HomeAssistantError(f"stt member {member} returned an error")
             return result
 
-        return await self.pool.async_execute(run, description="stt")
+        # Audio bytes rather than characters: not comparable to a text
+        # prompt, but the only measure of how much this request weighs.
+        return await self.pool.async_execute(run, description="stt", size=len(audio))

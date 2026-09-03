@@ -22,6 +22,7 @@ from .const import (
     CONF_MAX_ATTEMPTS,
     CONF_MEMBERS,
     CONF_POOL_TYPE,
+    CONF_RPM_LIMIT,
     CONF_STRATEGY,
     CONF_WEIGHT,
     DEFAULT_COOLDOWN,
@@ -34,6 +35,7 @@ from .const import (
 )
 
 LIMIT_PREFIX = "limit_"
+RPM_PREFIX = "rpm_"
 WEIGHT_PREFIX = "weight_"
 
 
@@ -101,7 +103,12 @@ def _members_schema(
 
 
 def _limits_schema(member_ids: list[str], existing: list[dict[str, Any]]) -> vol.Schema:
-    """Build the schema for the per-member daily allowance and weight."""
+    """Build the schema for the per-member allowances and weight.
+
+    Three numbers per member: requests per day, requests per minute, and the
+    routing weight. Providers meter tokens too, but Home Assistant never
+    reports a token count back, so there is nothing to declare against.
+    """
     previous = {item["entity_id"]: item for item in existing}
     fields: dict[Any, Any] = {}
     for member_id in member_ids:
@@ -114,6 +121,16 @@ def _limits_schema(member_ids: list[str], existing: list[dict[str, Any]]) -> vol
         ] = selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0, max=1000000, step=1, mode=selector.NumberSelectorMode.BOX
+            )
+        )
+        fields[
+            vol.Required(
+                f"{RPM_PREFIX}{member_id}",
+                default=old.get(CONF_RPM_LIMIT, 0),
+            )
+        ] = selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0, max=100000, step=1, mode=selector.NumberSelectorMode.BOX
             )
         )
         fields[
@@ -137,6 +154,7 @@ def _build_members(
         {
             "entity_id": member_id,
             CONF_DAILY_LIMIT: int(user_input.get(f"{LIMIT_PREFIX}{member_id}", 0) or 0),
+            CONF_RPM_LIMIT: int(user_input.get(f"{RPM_PREFIX}{member_id}", 0) or 0),
             CONF_WEIGHT: int(
                 user_input.get(f"{WEIGHT_PREFIX}{member_id}", DEFAULT_WEIGHT) or 1
             ),

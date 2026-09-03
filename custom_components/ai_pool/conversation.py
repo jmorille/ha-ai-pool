@@ -63,4 +63,6 @@ class AIPoolConversationEntity(AIPoolEntity, conversation.ConversationEntity):
                 )
             return result
 
-        return await self.pool.async_execute(run, description="conversation")
+        return await self.pool.async_execute(
+            run, description="conversation", size=len(user_input.text)
+        )

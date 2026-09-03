@@ -118,7 +118,7 @@ different question:
 
 | Sensor | Question it answers |
 | ------ | ------------------- |
-| `<member> calls` | Who is doing the work, and against which allowance? Status, remaining allowance, success rate, cooldown, last error, and one `failures_<kind>` counter per observed failure kind. |
+| `<member> calls` | Who is doing the work, and against which allowance? Status, remaining allowance, success rate, cooldown, last error, one `failures_<kind>` counter per observed failure kind, and the rate-limit counters below. |
 | `<member> latency` | Who answers fast enough to deserve going first? Duration of the last successful call, with today's average, min, max and a recent-window average. |
 | `Fallback rate` | Is the preference order any good? Share of today's requests that needed more than one member, with the attempt counters behind it. |
 
@@ -130,6 +130,49 @@ measures how long the provider took to say no, which is a different question.
 
 A fallback rate near zero means the first choice is serving. A high one means
 the pool is quietly working around an order that should be changed.
+
+### Tracking rate limits
+
+Providers meter three dimensions: requests per minute, input **tokens** per
+minute, and requests per day. Two of the three can be measured from here, and
+the calls sensor carries them as attributes:
+
+| Attribute | Meaning |
+| --------- | ------- |
+| `requests_last_minute` | Requests sent to this member in the last 60 seconds — the RPM dimension, rolling and pruned by age. |
+| `rpm_limit`, `rpm_remaining` | Headroom against the per-minute allowance you declared. `null` when none is declared. |
+| `requests_today` | Requests sent today, refusals included. |
+| `rpd_remaining` | Headroom against the daily allowance, counted from `requests_today`. |
+| `input_chars_last_minute`, `input_chars_today` | How much input was sent, in characters. |
+
+Three things about those numbers are worth being explicit about.
+
+**Token counts are not available.** Home Assistant's `ai_task`, `conversation`,
+`tts` and `stt` APIs return the result, never the provider's usage report, so
+the integration cannot know how many tokens a request cost. Characters are what
+can honestly be measured; roughly four characters per token is the usual rule
+of thumb, so the TPM dimension can be estimated but not tracked.
+
+**`calls_today` and `requests_today` bracket the truth.** A provider charges a
+request against your allowance when it receives it, but a request it refuses
+with a server error probably costs nothing. `calls_today` counts successes only,
+`requests_today` counts every attempt, and the provider's own counter sits
+somewhere between the two. The routing decision deliberately uses the
+optimistic one: an announcement that fails loudly beats one that never runs.
+
+**Limits have to be typed in.** Google no longer publishes per-model figures on
+[its rate-limit page](https://ai.google.dev/gemini-api/docs/rate-limits) — read
+your own at [AI Studio](https://aistudio.google.com/rate-limit). Two details
+from that page shape how a pool should be built: limits are applied **per
+project, not per API key**, so two accounts really do get independent
+allowances; and "specified rate limits are not guaranteed and actual capacity
+may vary", so a member can refuse while well inside its declared limit.
+
+That last point is why `failures_capacity` and `failures_quota` are counted
+separately. A `429 RESOURCE_EXHAUSTED` is your limit; a `503 UNAVAILABLE` is the
+model's serving capacity, shared by everyone using it and documented nowhere.
+Two members on separate accounts can be refused in the same minute if they point
+at the same model — the fix for that is different models, not more accounts.
 
 `Download diagnostics` on the config entry returns the same per-member data
 plus the routing policy and the pool-wide counters.

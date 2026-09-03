@@ -36,6 +36,7 @@ CONF_POOL_TYPE: Final = "pool_type"
 CONF_MEMBERS: Final = "members"
 CONF_STRATEGY: Final = "strategy"
 CONF_DAILY_LIMIT: Final = "daily_limit"
+CONF_RPM_LIMIT: Final = "rpm_limit"
 CONF_WEIGHT: Final = "weight"
 CONF_COOLDOWN: Final = "cooldown_seconds"
 CONF_MAX_ATTEMPTS: Final = "max_attempts"
@@ -43,6 +44,7 @@ CONF_STT_BUFFER_LIMIT: Final = "stt_buffer_limit"
 
 # --- Defaults ---------------------------------------------------------------
 DEFAULT_DAILY_LIMIT: Final = 0  # 0 means "no declared limit"
+DEFAULT_RPM_LIMIT: Final = 0  # 0 means "no declared limit"
 DEFAULT_WEIGHT: Final = 1
 DEFAULT_COOLDOWN: Final = 300  # seconds a member sits out after a capacity error
 DEFAULT_MAX_ATTEMPTS: Final = 3

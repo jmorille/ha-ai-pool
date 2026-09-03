@@ -148,6 +148,20 @@ class AIPoolCallsSensor(AIPoolMemberSensor):
             "cooldown_until": row["cooldown_until"],
             "last_error": row["last_error"],
             "last_success": row["last_success"],
+            # Rate-limit tracking. Providers meter requests, and a refusal is
+            # a request: requests_today is therefore the pessimistic reading of
+            # the same allowance that calls_today reads optimistically. The
+            # provider's own counter sits between the two and is not visible
+            # from here.
+            "requests_today": row["requests_today"],
+            "rpd_remaining": row["rpd_remaining"],
+            "requests_last_minute": row["requests_last_minute"],
+            "rpm_limit": row["rpm_limit"],
+            "rpm_remaining": row["rpm_remaining"],
+            # Characters, not tokens: no token count reaches the integration.
+            # Roughly four characters per token is the usual rule of thumb.
+            "input_chars_today": row["input_chars_today"],
+            "input_chars_last_minute": row["input_chars_last_minute"],
         }
         # One key per observed failure kind rather than a nested dict, so each
         # is usable on its own in a template or a dashboard card.

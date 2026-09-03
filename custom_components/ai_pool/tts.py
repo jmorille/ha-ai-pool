@@ -93,4 +93,4 @@ class AIPoolTTSEntity(AIPoolEntity, tts.TextToSpeechEntity):
             )
             return await tts.async_get_media_source_audio(self.hass, media_source_id)
 
-        return await self.pool.async_execute(run, description="tts")
+        return await self.pool.async_execute(run, description="tts", size=len(message))

@@ -13,6 +13,7 @@ from custom_components.ai_pool.const import (
     CONF_MAX_ATTEMPTS,
     CONF_MEMBERS,
     CONF_POOL_TYPE,
+    CONF_RPM_LIMIT,
     CONF_STRATEGY,
     CONF_WEIGHT,
     DOMAIN,
@@ -25,7 +26,11 @@ from custom_components.ai_pool.const import (
     STRATEGY_ROUND_ROBIN,
 )
 from custom_components.ai_pool.pool import AIPool, AllMembersFailedError
-from custom_components.ai_pool.store import RECENT_LATENCY_SAMPLES, MemberState
+from custom_components.ai_pool.store import (
+    MAX_REQUEST_LOG,
+    RECENT_LATENCY_SAMPLES,
+    MemberState,
+)
 
 GOOGLE_503 = '{"error": {"code": 503, "status": "UNAVAILABLE"}}'
 GOOGLE_429 = '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}'
@@ -41,11 +46,13 @@ def build_entry(
     *,
     strategy: str = STRATEGY_PRIORITY,
     limits: dict[str, int] | None = None,
+    rpm: dict[str, int] | None = None,
     max_attempts: int = 5,
     cooldown: int = 300,
 ) -> MockConfigEntry:
     """Create a config entry for a pool of the given members."""
     limits = limits or {}
+    rpm = rpm or {}
     return MockConfigEntry(
         domain=DOMAIN,
         title="Test pool",
@@ -58,6 +65,7 @@ def build_entry(
                 {
                     "entity_id": member,
                     CONF_DAILY_LIMIT: limits.get(member, 0),
+                    CONF_RPM_LIMIT: rpm.get(member, 0),
                     CONF_WEIGHT: 1,
                 }
                 for member in members
@@ -509,3 +517,131 @@ async def test_day_roll_resets_metrics_but_keeps_recent_latency(
     assert row["failures_by_kind"] == {}
     assert row["latency_recent_average"] == recent
     assert pool.routing_snapshot()["requests_today"] == 0
+
+
+async def test_requests_count_attempts_not_successes(
+    hass: HomeAssistant, available
+) -> None:
+    """A provider charges the request when it receives it, refusal included."""
+    available(A, B)
+    pool = await make_pool(hass, build_entry([A, B]))
+
+    async def run(member: str) -> str:
+        if member == A:
+            raise RuntimeError(GOOGLE_503)
+        return "ok"
+
+    await pool.async_execute(run)
+
+    rows = {row["entity_id"]: row for row in pool.snapshot()}
+    assert rows[A]["calls_today"] == 0
+    assert rows[A]["requests_today"] == 1
+    assert rows[B]["calls_today"] == 1
+    assert rows[B]["requests_today"] == 1
+
+
+async def test_rate_headroom_uses_declared_limits(
+    hass: HomeAssistant, available
+) -> None:
+    """Both dimensions are reported against what the user declared."""
+    available(A)
+    pool = await make_pool(hass, build_entry([A], limits={A: 200}, rpm={A: 10}))
+
+    async def run(member: str) -> str:
+        return "ok"
+
+    await pool.async_execute(run)
+    await pool.async_execute(run)
+
+    row = pool.snapshot()[0]
+    assert row["requests_last_minute"] == 2
+    assert row["rpm_limit"] == 10
+    assert row["rpm_remaining"] == 8
+    assert row["daily_limit"] == 200
+    assert row["rpd_remaining"] == 198
+
+
+async def test_undeclared_limits_report_no_headroom(
+    hass: HomeAssistant, available
+) -> None:
+    """With no declared limit there is no remaining count to invent."""
+    available(A)
+    pool = await make_pool(hass, build_entry([A]))
+
+    async def run(member: str) -> str:
+        return "ok"
+
+    await pool.async_execute(run)
+
+    row = pool.snapshot()[0]
+    assert row["requests_last_minute"] == 1
+    assert row["rpm_limit"] is None
+    assert row["rpm_remaining"] is None
+    assert row["rpd_remaining"] is None
+
+
+async def test_input_size_is_tracked(hass: HomeAssistant, available) -> None:
+    """Characters stand in for tokens, which never reach the integration."""
+    available(A)
+    pool = await make_pool(hass, build_entry([A]))
+
+    async def run(member: str) -> str:
+        return "ok"
+
+    await pool.async_execute(run, size=120)
+    await pool.async_execute(run, size=80)
+
+    row = pool.snapshot()[0]
+    assert row["input_chars_today"] == 200
+    assert row["input_chars_last_minute"] == 200
+
+
+def test_request_window_forgets_older_requests() -> None:
+    """A per-minute limit knows nothing about what happened two minutes ago."""
+    state = MemberState()
+    state.record_request(10, now=1000.0)
+    state.record_request(10, now=1030.0)
+
+    assert state.requests_last_minute(now=1030.0) == 2
+    assert state.input_chars_last_minute(now=1030.0) == 20
+
+    # A minute later the first request has aged out, the second has not.
+    assert state.requests_last_minute(now=1070.0) == 1
+    assert state.input_chars_last_minute(now=1070.0) == 10
+    assert state.requests_last_minute(now=1200.0) == 0
+
+    # Day counters are unaffected by the window sliding.
+    assert state.requests == 2
+    assert state.input_chars == 20
+
+
+def test_request_log_is_bounded() -> None:
+    """A runaway caller must not grow the stored state without bound."""
+    state = MemberState()
+    for index in range(MAX_REQUEST_LOG + 50):
+        state.record_request(1, now=1000.0 + index * 0.001)
+
+    assert len(state.request_log) == MAX_REQUEST_LOG
+    assert state.requests == MAX_REQUEST_LOG + 50
+
+
+def test_day_roll_keeps_the_rate_window() -> None:
+    """A request made at 23:59:50 still counts against RPM at 00:00:05."""
+    state = MemberState()
+    state.record_request(30, now=1000.0)
+    state.reset_day("2026-09-03")
+
+    assert state.requests == 0
+    assert state.input_chars == 0
+    assert state.requests_last_minute(now=1015.0) == 1
+
+
+def test_request_log_survives_a_round_trip() -> None:
+    """The window is persisted, so a restart does not hide recent requests."""
+    state = MemberState()
+    state.record_request(42, now=1000.0)
+
+    restored = MemberState.from_dict(state.as_dict())
+
+    assert restored.requests_last_minute(now=1010.0) == 1
+    assert restored.input_chars_last_minute(now=1010.0) == 42

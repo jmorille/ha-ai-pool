@@ -49,7 +49,9 @@ class AIPoolTaskEntity(AIPoolEntity, ai_task.AITaskEntity):
                 llm_api=task.llm_api,
             )
 
-        result = await self.pool.async_execute(run, description="generate_data")
+        result = await self.pool.async_execute(
+            run, description="generate_data", size=len(task.instructions)
+        )
 
         # The member's own conversation_id belongs to its chat session, not
         # ours; callers correlate against the pool's log.
