@@ -503,12 +503,14 @@ async def test_calls_sensor_carries_model_and_strikes(
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
+    # Picked by unique_id: the entity id is built from a translated name, and
+    # the test instance does not speak the same language as the deployment.
     calls = next(
         entity.entity_id
         for entity in er.async_entries_for_config_entry(
             er.async_get(hass), entry.entry_id
         )
-        if entity.domain == "sensor" and "latence" not in entity.entity_id
+        if entity.unique_id == f"{entry.entry_id}_{A}"
     )
     attributes = hass.states.get(calls).attributes
     assert attributes["model"] == "models/flash"
