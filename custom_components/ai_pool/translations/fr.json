@@ -72,6 +72,12 @@
     "sensor": {
       "member_calls": {
         "name": "Appels {member}"
+      },
+      "member_latency": {
+        "name": "Latence {member}"
+      },
+      "pool_fallback_rate": {
+        "name": "Taux de repli"
       }
     }
   }

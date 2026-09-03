@@ -3,6 +3,7 @@
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -66,14 +67,17 @@ async def test_setup_and_unload(hass: HomeAssistant, pool_type: str) -> None:
 
     assert entry.state is ConfigEntryState.LOADED
 
-    # One diagnostic sensor per member.
-    states = [
-        state
-        for state in hass.states.async_all("sensor")
-        if state.entity_id.startswith("sensor.")
-        and pool_type in state.attributes.get("friendly_name", "")
+    # Calls and latency per member, plus the pool's own fallback-rate sensor.
+    registry = er.async_get(hass)
+    sensors = [
+        entity
+        for entity in er.async_entries_for_config_entry(registry, entry.entry_id)
+        if entity.domain == "sensor"
     ]
-    assert len(states) == 2
+    assert len(sensors) == 5
+    # Distinct ids prove the name translations resolved: without them every
+    # sensor would fall back to the device name and collide.
+    assert len({entity.entity_id for entity in sensors}) == 5
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

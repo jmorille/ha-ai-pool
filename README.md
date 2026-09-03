@@ -112,13 +112,32 @@ pattern-based, and why `unknown` exists rather than being guessed at.
 
 ## Observability
 
-Each member gets a diagnostic sensor counting the calls it served today, with
-its status, remaining allowance, cooldown, and last error as attributes. The
-config entry's *Download diagnostics* returns the same data plus the routing
-policy.
+The pool wraps every call, so it is the one place that can measure providers
+without instrumenting any of them. Three diagnostic sensors, each answering a
+different question:
+
+| Sensor | Question it answers |
+| ------ | ------------------- |
+| `<member> calls` | Who is doing the work, and against which allowance? Status, remaining allowance, success rate, cooldown, last error, and one `failures_<kind>` counter per observed failure kind. |
+| `<member> latency` | Who answers fast enough to deserve going first? Duration of the last successful call, with today's average, min, max and a recent-window average. |
+| `Fallback rate` | Is the preference order any good? Share of today's requests that needed more than one member, with the attempt counters behind it. |
+
+The latency sensor is a `measurement` with `device_class: duration`, so the
+recorder keeps long-term statistics: providers can be charted against each
+other over weeks, which is the comparison that tells you how to order and
+weight them. It records **successful** calls only — a refusal's duration
+measures how long the provider took to say no, which is a different question.
+
+A fallback rate near zero means the first choice is serving. A high one means
+the pool is quietly working around an order that should be changed.
+
+`Download diagnostics` on the config entry returns the same per-member data
+plus the routing policy and the pool-wide counters.
 
 Counters are persisted, so a restart at 18:00 does not hand a spent member a
-fresh allowance. They reset on the local calendar day.
+fresh allowance. Day counters reset on the local calendar day; the recent
+latency window deliberately does not, because "how fast is it right now" is
+not a question about today.
 
 ## Per-type notes
 

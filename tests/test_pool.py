@@ -25,6 +25,7 @@ from custom_components.ai_pool.const import (
     STRATEGY_ROUND_ROBIN,
 )
 from custom_components.ai_pool.pool import AIPool, AllMembersFailedError
+from custom_components.ai_pool.store import RECENT_LATENCY_SAMPLES, MemberState
 
 GOOGLE_503 = '{"error": {"code": 503, "status": "UNAVAILABLE"}}'
 GOOGLE_429 = '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}'
@@ -350,3 +351,161 @@ async def test_member_with_unknown_state_is_healthy(hass: HomeAssistant) -> None
 
     rows = {row["entity_id"]: row for row in pool.snapshot()}
     assert rows[A]["status"] == STATUS_HEALTHY
+
+
+# --- Metrics ----------------------------------------------------------------
+
+
+def test_recent_latency_ring_is_bounded() -> None:
+    """A long-running instance must not grow the stored state without bound."""
+    state = MemberState()
+    for index in range(RECENT_LATENCY_SAMPLES + 5):
+        state.record_latency(float(index))
+
+    assert len(state.latency_recent) == RECENT_LATENCY_SAMPLES
+    assert state.latency_recent[0] == 5.0
+
+
+async def test_latency_is_recorded_for_successes_only(
+    hass: HomeAssistant, available
+) -> None:
+    """How long a refusal took is not how long a usable answer takes."""
+    available(A, B)
+    pool = await make_pool(hass, build_entry([A, B]))
+
+    async def run(member: str) -> str:
+        if member == A:
+            raise RuntimeError(GOOGLE_503)
+        return "ok"
+
+    await pool.async_execute(run)
+
+    rows = {row["entity_id"]: row for row in pool.snapshot()}
+    assert rows[A]["latency_samples"] == 0
+    assert rows[A]["latency_last"] is None
+    assert rows[B]["latency_samples"] == 1
+    assert rows[B]["latency_last"] >= 0
+    assert rows[B]["latency_average"] == rows[B]["latency_last"]
+    assert rows[B]["latency_recent_average"] == rows[B]["latency_last"]
+
+
+async def test_failures_are_counted_by_kind(hass: HomeAssistant, available) -> None:
+    """A member that is out of quota and one that times out need different fixes."""
+    available(A)
+    pool = await make_pool(hass, build_entry([A]))
+    messages = iter([GOOGLE_503, GOOGLE_429])
+
+    async def run(member: str) -> str:
+        raise RuntimeError(next(messages))
+
+    for _ in range(2):
+        with pytest.raises(AllMembersFailedError):
+            await pool.async_execute(run)
+
+    row = pool.snapshot()[0]
+    assert row["failures_by_kind"] == {"capacity": 1, "quota": 1}
+    assert row["failures_today"] == 2
+    assert row["success_rate"] == 0.0
+
+
+async def test_success_rate_mixes_calls_and_failures(
+    hass: HomeAssistant, available
+) -> None:
+    available(A)
+    pool = await make_pool(hass, build_entry([A]))
+    outcomes = iter([True, False])
+
+    async def run(member: str) -> str:
+        if next(outcomes):
+            return "ok"
+        raise RuntimeError(GOOGLE_503)
+
+    await pool.async_execute(run)
+    with pytest.raises(AllMembersFailedError):
+        await pool.async_execute(run)
+
+    assert pool.snapshot()[0]["success_rate"] == 50.0
+
+
+async def test_routing_snapshot_tracks_fallbacks(
+    hass: HomeAssistant, available
+) -> None:
+    """The fallback rate is the signal that the preference order is wrong."""
+    available(A, B)
+    pool = await make_pool(hass, build_entry([A, B]))
+
+    async def run(member: str) -> str:
+        if member == A:
+            raise RuntimeError(GOOGLE_503)
+        return "ok"
+
+    await pool.async_execute(run)  # A refuses, B serves: two attempts
+    await pool.async_execute(run)  # A is cooling down, B serves: one attempt
+
+    routing = pool.routing_snapshot()
+    assert routing["requests_today"] == 2
+    assert routing["served_today"] == 2
+    assert routing["failed_today"] == 0
+    assert routing["attempts_today"] == 3
+    assert routing["fallbacks_today"] == 1
+    assert routing["fallback_rate"] == 50.0
+    assert routing["attempts_per_request"] == 1.5
+    assert routing["last_attempts"] == 1
+    assert routing["last_member"] == B
+    assert routing["members_total"] == 2
+    assert routing["members_healthy"] == 1
+
+
+async def test_routing_snapshot_counts_a_failed_request(
+    hass: HomeAssistant, available
+) -> None:
+    available(A)
+    pool = await make_pool(hass, build_entry([A]))
+
+    async def run(member: str) -> str:
+        raise RuntimeError(GOOGLE_503)
+
+    with pytest.raises(AllMembersFailedError):
+        await pool.async_execute(run)
+
+    routing = pool.routing_snapshot()
+    assert routing["requests_today"] == 1
+    assert routing["served_today"] == 0
+    assert routing["failed_today"] == 1
+    assert routing["last_member"] is None
+
+
+async def test_empty_pool_has_no_routing_metrics(hass: HomeAssistant) -> None:
+    """Nothing was routed, so a rate would be a made-up number."""
+    pool = await make_pool(hass, build_entry([]))
+
+    routing = pool.routing_snapshot()
+    assert routing["requests_today"] == 0
+    assert routing["fallback_rate"] is None
+    assert routing["attempts_per_request"] is None
+
+
+async def test_day_roll_resets_metrics_but_keeps_recent_latency(
+    hass: HomeAssistant, available
+) -> None:
+    """Day counters describe the quota window; recent latency does not."""
+    available(A)
+    pool = await make_pool(hass, build_entry([A]))
+
+    async def run(member: str) -> str:
+        return "ok"
+
+    await pool.async_execute(run)
+    recent = pool.snapshot()[0]["latency_recent_average"]
+    assert recent is not None
+
+    pool.store.state.member(A).day = "2000-01-01"
+    pool.store.state.stats.day = "2000-01-01"
+    pool.store.roll_day()
+
+    row = pool.snapshot()[0]
+    assert row["latency_samples"] == 0
+    assert row["latency_average"] is None
+    assert row["failures_by_kind"] == {}
+    assert row["latency_recent_average"] == recent
+    assert pool.routing_snapshot()["requests_today"] == 0

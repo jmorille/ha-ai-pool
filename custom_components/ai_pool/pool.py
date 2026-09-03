@@ -8,6 +8,7 @@ member and *what to do when it fails* lives here.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -44,6 +45,16 @@ from .strategies import Candidate, order_candidates
 _LOGGER = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+def _rounded(value: float | None, digits: int = 3) -> float | None:
+    """Round a metric for display, keeping None as None.
+
+    Rounded at the edge rather than at the source: the stored values stay
+    exact, while the attributes the recorder writes on every call stay short.
+    """
+    return None if value is None else round(value, digits)
+
 
 # Only "unavailable" means unusable. "unknown" is the resting state of every
 # ai_task, conversation, tts and stt entity, whose state is the timestamp of
@@ -190,9 +201,36 @@ class AIPool:
                     "cooldown_until": state.cooldown_until,
                     "last_error": state.last_error,
                     "last_success": state.last_success,
+                    "failures_by_kind": dict(state.failures_by_kind),
+                    "success_rate": _rounded(state.success_rate, 1),
+                    "latency_last": _rounded(state.latency_last),
+                    "latency_average": _rounded(state.latency_average),
+                    "latency_min": _rounded(state.latency_min),
+                    "latency_max": _rounded(state.latency_max),
+                    "latency_recent_average": _rounded(state.latency_recent_average),
+                    "latency_samples": state.latency_count,
                 }
             )
         return result
+
+    def routing_snapshot(self) -> dict[str, Any]:
+        """Pool-wide view of what the routing itself cost today."""
+        self.store.roll_day()
+        stats = self.store.state.stats
+        statuses = [self.member_status(member) for member in self.members]
+        return {
+            "requests_today": stats.requests,
+            "served_today": stats.served,
+            "failed_today": stats.failures,
+            "attempts_today": stats.attempts,
+            "fallbacks_today": stats.fallbacks,
+            "fallback_rate": _rounded(stats.fallback_rate, 1),
+            "attempts_per_request": _rounded(stats.attempts_per_request, 2),
+            "last_attempts": stats.last_attempts,
+            "last_member": stats.last_member,
+            "members_total": len(self.members),
+            "members_healthy": statuses.count(STATUS_HEALTHY),
+        }
 
     # --- Selection ----------------------------------------------------------
 
@@ -264,12 +302,13 @@ class AIPool:
                 break
             attempts += 1
             state = self.store.touch(member.entity_id)
+            started = time.monotonic()
             try:
                 result = await run(member.entity_id)
             except Exception as err:
                 verdict = classify(err)
                 last_error = err
-                state.failures += 1
+                state.record_failure(verdict.kind.value)
                 state.last_error = f"{verdict.kind.value}: {verdict.message}"[:255]
                 self._apply_verdict(member, verdict)
                 _LOGGER.warning(
@@ -282,18 +321,43 @@ class AIPool:
                 continue
 
             state.calls += 1
+            state.record_latency(time.monotonic() - started)
             state.last_success = dt_util.utcnow().isoformat()
             state.cooldown_until = None
+            self._record_request(attempts, member.entity_id, served=True)
             await self.store.async_save()
             self._notify()
             return result
 
+        self._record_request(attempts, None, served=False)
         await self.store.async_save()
         self._notify()
         raise AllMembersFailedError(
             f"Pool {self.entry.title}: all {attempts} attempted member(s) failed "
             f"for {description}"
         ) from last_error
+
+    @callback
+    def _record_request(
+        self, attempts: int, member: str | None, *, served: bool
+    ) -> None:
+        """Record how much routing one request cost.
+
+        A request that needed more than one member is the signal that the
+        preference order is wrong - something no per-member counter shows,
+        since each member only knows about its own calls.
+        """
+        stats = self.store.state.stats
+        stats.requests += 1
+        stats.attempts += attempts
+        stats.last_attempts = attempts
+        if attempts > 1:
+            stats.fallbacks += 1
+        if served:
+            stats.served += 1
+            stats.last_member = member
+        else:
+            stats.failures += 1
 
     @callback
     def _apply_verdict(self, member: MemberConfig, verdict: Verdict) -> None:

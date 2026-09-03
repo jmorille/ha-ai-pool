@@ -1,7 +1,12 @@
-"""Persisted per-member usage and health.
+"""Persisted per-member usage, health and metrics.
 
 Counters survive restarts because a quota window does not: Home Assistant
 restarting at 18:00 must not hand a spent member a fresh allowance.
+
+Two kinds of number live here and they behave differently on purpose. Day
+counters (calls, failures, latency aggregates) reset when the local day rolls,
+because that is the window a quota is spent in. The recent-latency ring does
+not: how fast a provider is answering right now is not a question about today.
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, STORAGE_VERSION
+
+RECENT_LATENCY_SAMPLES = 20
 
 
 @dataclass
@@ -29,6 +36,72 @@ class MemberState:
     last_error: str | None = None
     last_success: str | None = None
 
+    # --- Metrics ------------------------------------------------------------
+    failures_by_kind: dict[str, int] = field(default_factory=dict)
+    latency_last: float | None = None
+    latency_count: int = 0
+    latency_total: float = 0.0
+    latency_min: float | None = None
+    latency_max: float | None = None
+    latency_recent: list[float] = field(default_factory=list)
+
+    def record_latency(self, seconds: float) -> None:
+        """Record how long a *successful* call took.
+
+        Only successes are timed. A failure's duration measures how long the
+        provider took to refuse, which would drag the average away from the
+        number the question actually asks: how long a usable answer takes.
+        """
+        self.latency_last = seconds
+        self.latency_count += 1
+        self.latency_total += seconds
+        if self.latency_min is None or seconds < self.latency_min:
+            self.latency_min = seconds
+        if self.latency_max is None or seconds > self.latency_max:
+            self.latency_max = seconds
+        self.latency_recent = [*self.latency_recent, seconds][-RECENT_LATENCY_SAMPLES:]
+
+    def record_failure(self, kind: str) -> None:
+        """Count a failure against its classified kind."""
+        self.failures += 1
+        self.failures_by_kind = {
+            **self.failures_by_kind,
+            kind: self.failures_by_kind.get(kind, 0) + 1,
+        }
+
+    @property
+    def latency_average(self) -> float | None:
+        """Mean duration of today's successful calls."""
+        if not self.latency_count:
+            return None
+        return self.latency_total / self.latency_count
+
+    @property
+    def latency_recent_average(self) -> float | None:
+        """Mean duration of the last few successful calls, whatever the day."""
+        if not self.latency_recent:
+            return None
+        return sum(self.latency_recent) / len(self.latency_recent)
+
+    @property
+    def success_rate(self) -> float | None:
+        """Share of today's attempts that succeeded, as a percentage."""
+        attempts = self.calls + self.failures
+        if not attempts:
+            return None
+        return 100.0 * self.calls / attempts
+
+    def reset_day(self, day: str) -> None:
+        """Zero the day-scoped counters and stamp the new window."""
+        self.day = day
+        self.calls = 0
+        self.failures = 0
+        self.failures_by_kind = {}
+        self.latency_count = 0
+        self.latency_total = 0.0
+        self.latency_min = None
+        self.latency_max = None
+
     def as_dict(self) -> dict:
         """Serialise for the storage helper."""
         return asdict(self)
@@ -41,11 +114,64 @@ class MemberState:
 
 
 @dataclass
+class PoolStats:
+    """Day-scoped routing statistics for the pool as a whole.
+
+    These answer the question no per-member counter can: is the configured
+    preference order any good? A request that needed a second member is a
+    request the first choice should have served.
+    """
+
+    day: str = ""
+    requests: int = 0
+    served: int = 0
+    attempts: int = 0
+    fallbacks: int = 0
+    failures: int = 0
+    last_attempts: int = 0
+    last_member: str | None = None
+
+    @property
+    def fallback_rate(self) -> float | None:
+        """Share of requests that needed more than one member, as a percentage."""
+        if not self.requests:
+            return None
+        return 100.0 * self.fallbacks / self.requests
+
+    @property
+    def attempts_per_request(self) -> float | None:
+        """Mean number of members tried per request."""
+        if not self.requests:
+            return None
+        return self.attempts / self.requests
+
+    def reset_day(self, day: str) -> None:
+        """Zero the day-scoped counters and stamp the new window."""
+        self.day = day
+        self.requests = 0
+        self.served = 0
+        self.attempts = 0
+        self.fallbacks = 0
+        self.failures = 0
+
+    def as_dict(self) -> dict:
+        """Serialise for the storage helper."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> PoolStats:
+        """Rehydrate, ignoring keys written by other versions."""
+        known = {f for f in cls.__dataclass_fields__}
+        return cls(**{k: v for k, v in data.items() if k in known})
+
+
+@dataclass
 class PoolState:
     """Everything the pool persists between calls and across restarts."""
 
     cursor: int = 0
     members: dict[str, MemberState] = field(default_factory=dict)
+    stats: PoolStats = field(default_factory=PoolStats)
 
     def member(self, key: str) -> MemberState:
         """Return the state for a member, creating it on first use."""
@@ -73,6 +199,7 @@ class UsageStore:
                     key: MemberState.from_dict(value)
                     for key, value in (raw.get("members") or {}).items()
                 },
+                stats=PoolStats.from_dict(raw.get("stats") or {}),
             )
         self.roll_day()
         return self.state
@@ -85,6 +212,7 @@ class UsageStore:
                 "members": {
                     key: value.as_dict() for key, value in self.state.members.items()
                 },
+                "stats": self.state.stats.as_dict(),
             }
         )
 
@@ -121,14 +249,15 @@ class UsageStore:
         rolled = False
         for state in self.state.members.values():
             if state.day != current:
-                state.day = current
-                state.calls = 0
-                state.failures = 0
+                state.reset_day(current)
                 rolled = True
             if state.blocked_until_day and state.blocked_until_day <= current:
                 # The window the member was spent in has passed.
                 state.blocked_until_day = None
                 rolled = True
+        if self.state.stats.day != current:
+            self.state.stats.reset_day(current)
+            rolled = True
         return rolled
 
     def is_new_day(self, stored_day: str, now: datetime | None = None) -> bool:
