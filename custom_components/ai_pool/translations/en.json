@@ -21,7 +21,7 @@
       },
       "limits": {
         "title": "Allowances",
-        "description": "Declared allowances per member for {members}: requests per day, then requests per minute. Use 0 where the limit is unknown. Providers do not report remaining quota, so these numbers only steer the rotation — a real refusal is always detected from the error. Google publishes no fixed figures: read yours at https://aistudio.google.com/rate-limit, and note they are per project rather than per API key.",
+        "description": "Declared allowances per member for {members}: requests per day, then requests per minute. Use 0 where the limit is unknown. Providers do not report remaining quota, so these numbers only steer the rotation — a real refusal is always detected from the error. Google publishes no fixed figures and does not guarantee them: read your own in AI Studio, and note they apply per project rather than per API key.",
         "data": {}
       }
     },
@@ -43,7 +43,7 @@
       },
       "limits": {
         "title": "Allowances",
-        "description": "Declared allowances per member for {members}: requests per day, then requests per minute. Use 0 where the limit is unknown. Providers do not report remaining quota, so these numbers only steer the rotation — a real refusal is always detected from the error. Google publishes no fixed figures: read yours at https://aistudio.google.com/rate-limit, and note they are per project rather than per API key.",
+        "description": "Declared allowances per member for {members}: requests per day, then requests per minute. Use 0 where the limit is unknown. Providers do not report remaining quota, so these numbers only steer the rotation — a real refusal is always detected from the error. Google publishes no fixed figures and does not guarantee them: read your own in AI Studio, and note they apply per project rather than per API key.",
         "data": {}
       }
     },

@@ -21,7 +21,7 @@
       },
       "limits": {
         "title": "Quotas",
-        "description": "Quotas declares par membre pour {members} : requetes par jour, puis requetes par minute. Mettre 0 quand la limite est inconnue. Les fournisseurs n'exposent pas leur quota restant : ces valeurs ne servent qu'a orienter la rotation, un refus reel est toujours detecte a partir de l'erreur. Google ne publie plus de chiffres fixes : lire les vos sur https://aistudio.google.com/rate-limit, et retenir qu'ils sont par projet et non par cle API.",
+        "description": "Quotas declares par membre pour {members} : requetes par jour, puis requetes par minute. Mettre 0 quand la limite est inconnue. Les fournisseurs n'exposent pas leur quota restant : ces valeurs ne servent qu'a orienter la rotation, un refus reel est toujours detecte a partir de l'erreur. Google ne publie plus de chiffres fixes et ne les garantit pas : lire les vos dans AI Studio, et retenir qu'ils s'appliquent par projet et non par cle API.",
         "data": {}
       }
     },
@@ -43,7 +43,7 @@
       },
       "limits": {
         "title": "Quotas",
-        "description": "Quotas declares par membre pour {members} : requetes par jour, puis requetes par minute. Mettre 0 quand la limite est inconnue. Les fournisseurs n'exposent pas leur quota restant : ces valeurs ne servent qu'a orienter la rotation, un refus reel est toujours detecte a partir de l'erreur. Google ne publie plus de chiffres fixes : lire les vos sur https://aistudio.google.com/rate-limit, et retenir qu'ils sont par projet et non par cle API.",
+        "description": "Quotas declares par membre pour {members} : requetes par jour, puis requetes par minute. Mettre 0 quand la limite est inconnue. Les fournisseurs n'exposent pas leur quota restant : ces valeurs ne servent qu'a orienter la rotation, un refus reel est toujours detecte a partir de l'erreur. Google ne publie plus de chiffres fixes et ne les garantit pas : lire les vos dans AI Studio, et retenir qu'ils s'appliquent par projet et non par cle API.",
         "data": {}
       }
     },
