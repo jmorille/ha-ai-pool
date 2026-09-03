@@ -16,7 +16,11 @@
           "members": "Members",
           "strategy": "Selection strategy",
           "cooldown_seconds": "Cooldown after a capacity refusal",
-          "max_attempts": "Maximum members tried per call"
+          "max_attempts": "Maximum members tried per call",
+          "timeout_seconds": "Give up on a member after"
+        },
+        "data_description": {
+          "timeout_seconds": "How long to wait for one member before abandoning it and trying the next. 0 waits forever."
         }
       },
       "limits": {
@@ -38,7 +42,11 @@
           "members": "Members",
           "strategy": "Selection strategy",
           "cooldown_seconds": "Cooldown after a capacity refusal",
-          "max_attempts": "Maximum members tried per call"
+          "max_attempts": "Maximum members tried per call",
+          "timeout_seconds": "Give up on a member after"
+        },
+        "data_description": {
+          "timeout_seconds": "How long to wait for one member before abandoning it and trying the next. 0 waits forever."
         }
       },
       "limits": {
@@ -79,6 +87,44 @@
       "pool_fallback_rate": {
         "name": "Fallback rate"
       }
+    },
+    "binary_sensor": {
+      "no_healthy_member": {
+        "name": "No healthy member"
+      }
+    }
+  },
+  "issues": {
+    "duplicate_model": {
+      "title": "Members of {pool} share a model",
+      "description": "Several members of {pool} are backed by the same model: {models}. A capacity refusal comes from the model rather than from the account, so those members fail together and the pool cannot route around it. Point them at different models, or remove the duplicates."
+    }
+  },
+  "services": {
+    "reset_member": {
+      "name": "Reset a member",
+      "description": "Clear the cooldown, the spent-allowance mark and the permanent disable held against a pool member, so it is tried again immediately.",
+      "fields": {
+        "pool": {
+          "name": "Pool",
+          "description": "Which pool the member belongs to."
+        },
+        "member": {
+          "name": "Member",
+          "description": "The member entity to reset. Leave empty to reset every member of the pool."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "pool_not_found": {
+      "message": "No AI Pool config entry with id {pool}."
+    },
+    "pool_not_loaded": {
+      "message": "The pool {pool} is not loaded, so it has nothing to reset."
+    },
+    "not_a_member": {
+      "message": "{member} is not a member of {pool}."
     }
   }
 }

@@ -16,7 +16,11 @@
           "members": "Membres",
           "strategy": "Strategie de selection",
           "cooldown_seconds": "Mise a l'ecart apres un refus de capacite",
-          "max_attempts": "Nombre maximal de membres essayes par appel"
+          "max_attempts": "Nombre maximal de membres essayes par appel",
+          "timeout_seconds": "Abandonner un membre apres"
+        },
+        "data_description": {
+          "timeout_seconds": "Duree d'attente d'un membre avant de l'abandonner et d'essayer le suivant. 0 attend indefiniment."
         }
       },
       "limits": {
@@ -38,7 +42,11 @@
           "members": "Membres",
           "strategy": "Strategie de selection",
           "cooldown_seconds": "Mise a l'ecart apres un refus de capacite",
-          "max_attempts": "Nombre maximal de membres essayes par appel"
+          "max_attempts": "Nombre maximal de membres essayes par appel",
+          "timeout_seconds": "Abandonner un membre apres"
+        },
+        "data_description": {
+          "timeout_seconds": "Duree d'attente d'un membre avant de l'abandonner et d'essayer le suivant. 0 attend indefiniment."
         }
       },
       "limits": {
@@ -79,6 +87,44 @@
       "pool_fallback_rate": {
         "name": "Taux de repli"
       }
+    },
+    "binary_sensor": {
+      "no_healthy_member": {
+        "name": "Aucun membre sain"
+      }
+    }
+  },
+  "issues": {
+    "duplicate_model": {
+      "title": "Des membres de {pool} partagent un modele",
+      "description": "Plusieurs membres de {pool} reposent sur le meme modele : {models}. Un refus de capacite vient du modele et non du compte : ces membres echouent donc ensemble et le pool ne peut rien contourner. Faites-les pointer vers des modeles differents, ou supprimez les doublons."
+    }
+  },
+  "services": {
+    "reset_member": {
+      "name": "Reinitialiser un membre",
+      "description": "Efface la mise a l'ecart, la marque de quota epuise et la desactivation permanente retenues contre un membre, pour qu'il soit reessaye immediatement.",
+      "fields": {
+        "pool": {
+          "name": "Pool",
+          "description": "Le pool auquel appartient le membre."
+        },
+        "member": {
+          "name": "Membre",
+          "description": "L'entite membre a reinitialiser. Laisser vide pour reinitialiser tous les membres du pool."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "pool_not_found": {
+      "message": "Aucune entree AI Pool avec l'identifiant {pool}."
+    },
+    "pool_not_loaded": {
+      "message": "Le pool {pool} n'est pas charge, il n'y a rien a reinitialiser."
+    },
+    "not_a_member": {
+      "message": "{member} n'est pas membre de {pool}."
     }
   }
 }

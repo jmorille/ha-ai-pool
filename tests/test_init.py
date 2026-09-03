@@ -69,15 +69,16 @@ async def test_setup_and_unload(hass: HomeAssistant, pool_type: str) -> None:
 
     # Calls and latency per member, plus the pool's own fallback-rate sensor.
     registry = er.async_get(hass)
-    sensors = [
-        entity
-        for entity in er.async_entries_for_config_entry(registry, entry.entry_id)
-        if entity.domain == "sensor"
-    ]
+    entities = er.async_entries_for_config_entry(registry, entry.entry_id)
+    sensors = [entity for entity in entities if entity.domain == "sensor"]
     assert len(sensors) == 5
     # Distinct ids prove the name translations resolved: without them every
     # sensor would fall back to the device name and collide.
     assert len({entity.entity_id for entity in sensors}) == 5
+
+    # One problem sensor per pool, whatever the member count.
+    problems = [entity for entity in entities if entity.domain == "binary_sensor"]
+    assert len(problems) == 1
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

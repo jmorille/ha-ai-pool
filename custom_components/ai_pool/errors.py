@@ -28,7 +28,11 @@ class FailureKind(StrEnum):
     """Provider is busy but the allowance is intact. Short cooldown, retry later."""
 
     TRANSIENT = "transient"
-    """Server error or timeout. Immediately retryable, no cooldown."""
+    """Server error or connection failure. Immediately retryable, no cooldown."""
+
+    TIMEOUT = "timeout"
+    """The pool gave up waiting. Counted apart from a provider's own refusal,
+    because "too slow for us" and "it said no" call for different fixes."""
 
     AUTH = "auth"
     """Credentials are wrong or revoked. Retrying cannot help."""
@@ -121,7 +125,7 @@ def classify(error: BaseException | str) -> Verdict:
     testable without constructing Home Assistant error types.
     """
     if isinstance(error, TimeoutError):
-        return Verdict(FailureKind.TRANSIENT, "timeout")
+        return Verdict(FailureKind.TIMEOUT, "timed out")
 
     message = str(error).strip()
     if not message:

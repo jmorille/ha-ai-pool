@@ -7,6 +7,7 @@ member and *what to do when it fails* lives here.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -17,6 +18,7 @@ from typing import Any, TypeVar
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -27,13 +29,20 @@ from .const import (
     CONF_POOL_TYPE,
     CONF_RPM_LIMIT,
     CONF_STRATEGY,
+    CONF_TIMEOUT,
     CONF_WEIGHT,
     DEFAULT_COOLDOWN,
     DEFAULT_DAILY_LIMIT,
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_RPM_LIMIT,
     DEFAULT_STRATEGY,
+    DEFAULT_TIMEOUT,
     DEFAULT_WEIGHT,
+    DOMAIN,
+    EVENT_EXHAUSTED,
+    EVENT_FAILOVER,
+    ISSUE_DUPLICATE_MODEL,
+    MAX_COOLDOWN,
     STATUS_COOLDOWN,
     STATUS_DISABLED,
     STATUS_EXHAUSTED,
@@ -41,6 +50,7 @@ from .const import (
     STATUS_UNAVAILABLE,
 )
 from .errors import FailureKind, Verdict, classify
+from .models import member_model, shared_models
 from .store import UsageStore, days_ahead, parse_iso
 from .strategies import Candidate, order_candidates
 
@@ -127,6 +137,11 @@ class AIPool:
         return max(int(self._config.get(CONF_MAX_ATTEMPTS, DEFAULT_MAX_ATTEMPTS)), 1)
 
     @property
+    def timeout(self) -> float:
+        """Seconds to wait on one member before giving up on it. 0 disables."""
+        return max(float(self._config.get(CONF_TIMEOUT, DEFAULT_TIMEOUT) or 0), 0)
+
+    @property
     def members(self) -> list[MemberConfig]:
         """Configured members, in declared order."""
         return [
@@ -136,8 +151,39 @@ class AIPool:
     # --- Lifecycle ----------------------------------------------------------
 
     async def async_setup(self) -> None:
-        """Load persisted counters."""
+        """Load persisted counters and re-admit members held back for good."""
         await self.store.async_load()
+        # Setting up or reloading the entry is the user's way of saying "try
+        # again", and it is the only escape from a permanent disable.
+        if cleared := self.store.clear_disabled():
+            _LOGGER.info(
+                "Pool %s: re-admitting previously disabled member(s): %s",
+                self.entry.title,
+                ", ".join(cleared),
+            )
+            await self.store.async_save()
+
+    async def async_reset_member(self, member: str | None = None) -> list[str]:
+        """Clear the penalties on one member, or on all of them.
+
+        Returns the members that were actually holding a penalty, so a caller
+        can tell "reset three members" from "there was nothing to reset".
+        """
+        targets = [member] if member else [config.entity_id for config in self.members]
+        reset: list[str] = []
+        for entity_id in targets:
+            state = self.store.state.member(entity_id)
+            if (
+                state.disabled_reason
+                or state.cooldown_until
+                or state.blocked_until_day
+                or state.cooldown_strikes
+            ):
+                reset.append(entity_id)
+            state.clear_penalties()
+        await self.store.async_save()
+        self._notify()
+        return reset
 
     async def async_remove(self) -> None:
         """Drop persisted counters when the entry is deleted."""
@@ -158,6 +204,51 @@ class AIPool:
         """Tell listeners state changed."""
         for listener in list(self._listeners):
             listener()
+
+    # --- Models -------------------------------------------------------------
+
+    def member_model(self, entity_id: str) -> str | None:
+        """Which provider model backs a member, as far as it can be read."""
+        return member_model(self.hass, entity_id)
+
+    def duplicate_models(self) -> dict[str, list[str]]:
+        """Models used by more than one member of this pool."""
+        return shared_models(
+            {
+                member.entity_id: self.member_model(member.entity_id)
+                for member in self.members
+            }
+        )
+
+    @callback
+    def async_check_models(self) -> None:
+        """Raise or clear a repair issue about members sharing a model.
+
+        Worth a repair rather than a log line: a pool of duplicates looks
+        healthy in every sensor right up to the moment one provider-side
+        refusal takes all of them out together.
+        """
+        issue_id = f"{ISSUE_DUPLICATE_MODEL}_{self.entry.entry_id}"
+        duplicates = self.duplicate_models()
+        if not duplicates:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return
+
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_DUPLICATE_MODEL,
+            translation_placeholders={
+                "pool": self.entry.title,
+                "models": ", ".join(
+                    f"{model} ({len(members)} members)"
+                    for model, members in sorted(duplicates.items())
+                ),
+            },
+        )
 
     # --- Health -------------------------------------------------------------
 
@@ -206,6 +297,7 @@ class AIPool:
                 {
                     "entity_id": member.entity_id,
                     "status": self.member_status(member),
+                    "model": self.member_model(member.entity_id),
                     "calls_today": state.calls,
                     "failures_today": state.failures,
                     "daily_limit": member.daily_limit or None,
@@ -219,6 +311,7 @@ class AIPool:
                     "input_chars_last_minute": state.input_chars_last_minute(),
                     "weight": member.weight,
                     "cooldown_until": state.cooldown_until,
+                    "cooldown_strikes": state.cooldown_strikes,
                     "last_error": state.last_error,
                     "last_success": state.last_success,
                     "failures_by_kind": dict(state.failures_by_kind),
@@ -321,10 +414,22 @@ class AIPool:
 
         attempts = 0
         last_error: BaseException | None = None
+        # Models that just refused for capacity. Asking a second member backed
+        # by the same model is asking the same engine the same question.
+        spent_models: set[str] = set()
 
         for member in queue:
             if attempts >= self.max_attempts:
                 break
+            model = self.member_model(member.entity_id)
+            if model and model in spent_models:
+                _LOGGER.debug(
+                    "Pool %s: skipping %s, model %s just refused for capacity",
+                    self.entry.title,
+                    member.entity_id,
+                    model,
+                )
+                continue
             attempts += 1
             state = self.store.touch(member.entity_id)
             # Recorded before the call: the provider charges the request
@@ -332,13 +437,18 @@ class AIPool:
             state.record_request(size)
             started = time.monotonic()
             try:
-                result = await run(member.entity_id)
+                # A member that never answers would otherwise hold the whole
+                # request open: the deadline turns waiting into failing over.
+                async with asyncio.timeout(self.timeout or None):
+                    result = await run(member.entity_id)
             except Exception as err:
                 verdict = classify(err)
                 last_error = err
                 state.record_failure(verdict.kind.value)
                 state.last_error = f"{verdict.kind.value}: {verdict.message}"[:255]
                 self._apply_verdict(member, verdict)
+                if verdict.kind is FailureKind.CAPACITY and model:
+                    spent_models.add(model)
                 _LOGGER.warning(
                     "Pool %s: member %s failed %s (%s), trying next",
                     self.entry.title,
@@ -346,12 +456,24 @@ class AIPool:
                     description,
                     verdict.kind.value,
                 )
+                self._fire(
+                    EVENT_FAILOVER,
+                    member=member.entity_id,
+                    model=model,
+                    kind=verdict.kind.value,
+                    message=verdict.message[:255],
+                    description=description,
+                    attempt=attempts,
+                )
                 continue
 
             state.calls += 1
             state.record_latency(time.monotonic() - started)
             state.last_success = dt_util.utcnow().isoformat()
             state.cooldown_until = None
+            # A success is the only evidence that the provider has recovered,
+            # so it is what resets the escalating cooldown.
+            state.cooldown_strikes = 0
             self._record_request(attempts, member.entity_id, served=True)
             await self.store.async_save()
             self._notify()
@@ -359,11 +481,34 @@ class AIPool:
 
         self._record_request(attempts, None, served=False)
         await self.store.async_save()
+        self._fire(
+            EVENT_EXHAUSTED,
+            attempts=attempts,
+            description=description,
+            members=len(queue),
+        )
         self._notify()
         raise AllMembersFailedError(
             f"Pool {self.entry.title}: all {attempts} attempted member(s) failed "
             f"for {description}"
         ) from last_error
+
+    @callback
+    def _fire(self, event: str, **data: Any) -> None:
+        """Fire a pool event on the Home Assistant bus.
+
+        Every event carries the pool's identity, so a single automation can
+        watch one event type across every pool and branch on the payload.
+        """
+        self.hass.bus.async_fire(
+            event,
+            {
+                "entry_id": self.entry.entry_id,
+                "pool": self.entry.title,
+                "pool_type": self.pool_type,
+                **data,
+            },
+        )
 
     @callback
     def _record_request(
@@ -396,6 +541,20 @@ class AIPool:
             # Spent for this window; eligible again once the local day rolls.
             state.blocked_until_day = days_ahead(1)
         elif verdict.deserves_cooldown:
-            state.cooldown_until = (dt_util.utcnow() + self.cooldown).isoformat()
+            state.cooldown_strikes += 1
+            state.cooldown_until = (
+                dt_util.utcnow() + self._backoff(state.cooldown_strikes)
+            ).isoformat()
         elif verdict.kind is FailureKind.AUTH:
             state.disabled_reason = "authentication"
+
+    def _backoff(self, strikes: int) -> timedelta:
+        """How long a member sits out after ``strikes`` refusals in a row.
+
+        Capacity refusals arrive in clusters, so a fixed cooldown sends the
+        pool back to a saturated provider every few minutes to fail again.
+        Each consecutive refusal doubles the wait, up to a ceiling that keeps
+        the member in hourly rotation rather than dropping it for good.
+        """
+        seconds = self.cooldown.total_seconds() * 2 ** max(strikes - 1, 0)
+        return timedelta(seconds=min(seconds, MAX_COOLDOWN))

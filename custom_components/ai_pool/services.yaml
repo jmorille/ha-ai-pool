@@ -1,0 +1,16 @@
+reset_member:
+  fields:
+    pool:
+      required: true
+      selector:
+        config_entry:
+          integration: ai_pool
+    member:
+      required: false
+      selector:
+        entity:
+          filter:
+            - domain: ai_task
+            - domain: conversation
+            - domain: tts
+            - domain: stt

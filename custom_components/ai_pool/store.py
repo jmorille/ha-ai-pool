@@ -43,6 +43,10 @@ class MemberState:
     failures: int = 0
     day: str = ""
     cooldown_until: str | None = None
+    # How many capacity refusals in a row, which is what makes each cooldown
+    # longer than the last. Cleared by a success, not by the day rolling: a
+    # provider that is still refusing at midnight is still refusing.
+    cooldown_strikes: int = 0
     blocked_until_day: str | None = None
     disabled_reason: str | None = None
     last_error: str | None = None
@@ -116,6 +120,18 @@ class MemberState:
         if self.latency_max is None or seconds > self.latency_max:
             self.latency_max = seconds
         self.latency_recent = [*self.latency_recent, seconds][-RECENT_LATENCY_SAMPLES:]
+
+    def clear_penalties(self) -> None:
+        """Forget every reason this member is being held back.
+
+        A member disabled for authentication is otherwise held forever: the
+        flag is persisted and nothing in the day roll clears it, so one revoked
+        key would retire a provider permanently.
+        """
+        self.disabled_reason = None
+        self.cooldown_until = None
+        self.cooldown_strikes = 0
+        self.blocked_until_day = None
 
     def record_failure(self, kind: str) -> None:
         """Count a failure against its classified kind."""
@@ -277,6 +293,19 @@ class UsageStore:
                 "stats": self.state.stats.as_dict(),
             }
         )
+
+    def clear_disabled(self) -> list[str]:
+        """Re-admit every member disabled by a permanent failure.
+
+        Called when the entry is set up or reloaded, which is the closest thing
+        the integration has to the user saying "try again".
+        """
+        cleared = [
+            key for key, state in self.state.members.items() if state.disabled_reason
+        ]
+        for key in cleared:
+            self.state.member(key).disabled_reason = None
+        return cleared
 
     async def async_remove(self) -> None:
         """Delete persisted state, used when the config entry is removed."""

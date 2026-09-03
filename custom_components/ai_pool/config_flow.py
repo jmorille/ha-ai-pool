@@ -24,10 +24,12 @@ from .const import (
     CONF_POOL_TYPE,
     CONF_RPM_LIMIT,
     CONF_STRATEGY,
+    CONF_TIMEOUT,
     CONF_WEIGHT,
     DEFAULT_COOLDOWN,
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_STRATEGY,
+    DEFAULT_TIMEOUT,
     DEFAULT_WEIGHT,
     DOMAIN,
     POOL_TYPES,
@@ -96,6 +98,18 @@ def _members_schema(
             ): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=1, max=10, step=1, mode=selector.NumberSelectorMode.BOX
+                )
+            ),
+            vol.Required(
+                CONF_TIMEOUT,
+                default=defaults.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=900,
+                    step=5,
+                    unit_of_measurement="s",
+                    mode=selector.NumberSelectorMode.BOX,
                 )
             ),
         }
@@ -210,6 +224,7 @@ class AIPoolConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_STRATEGY: user_input[CONF_STRATEGY],
                         CONF_COOLDOWN: int(user_input[CONF_COOLDOWN]),
                         CONF_MAX_ATTEMPTS: int(user_input[CONF_MAX_ATTEMPTS]),
+                        CONF_TIMEOUT: int(user_input[CONF_TIMEOUT]),
                     }
                 )
                 return await self.async_step_limits()
@@ -279,6 +294,7 @@ class AIPoolOptionsFlow(OptionsFlow):
                     CONF_STRATEGY: user_input[CONF_STRATEGY],
                     CONF_COOLDOWN: int(user_input[CONF_COOLDOWN]),
                     CONF_MAX_ATTEMPTS: int(user_input[CONF_MAX_ATTEMPTS]),
+                    CONF_TIMEOUT: int(user_input[CONF_TIMEOUT]),
                 }
                 return await self.async_step_limits()
 

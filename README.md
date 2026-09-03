@@ -174,6 +174,76 @@ model's serving capacity, shared by everyone using it and documented nowhere.
 Two members on separate accounts can be refused in the same minute if they point
 at the same model — the fix for that is different models, not more accounts.
 
+### When the pool cannot serve
+
+Two things watch for the failure that used to be silent - every member refusing,
+the call raising, and an announcement simply never playing.
+
+A **problem sensor** per pool, on when no member is in a state to serve, with
+each member's status as attributes. It is polled rather than event-driven,
+because two of the three ways it changes - a cooldown expiring, a member entity
+going unavailable - happen without the pool being involved.
+
+Two **events** on the Home Assistant bus, so an automation can react without
+polling anything:
+
+| Event | Fired when | Payload |
+| ----- | ---------- | ------- |
+| `ai_pool_failover` | a member fails and the pool moves on | `member`, `model`, `kind`, `message`, `attempt`, `description` |
+| `ai_pool_exhausted` | every attempted member failed | `attempts`, `members`, `description` |
+
+Both also carry `entry_id`, `pool` and `pool_type`, so one automation can watch
+every pool and branch on the payload. A working pool fires nothing.
+
+### Members that are secretly the same model
+
+A capacity refusal comes from the model, not from the account: the moment two
+members are backed by the same model they fail together, and the pool has
+nothing left to route to. Two accounts on `gemini-flash-latest` are not two
+members, they are one member listed twice.
+
+The pool therefore reads each member's model from that member's own config
+entry - the subentry first, for providers that publish several entities per
+account - and does two things with it. It raises a **repair** when members share
+a model, because such a pool looks healthy in every sensor right up until it
+doesn't. And on failover it **skips** members backed by the model that just
+refused for capacity, rather than asking the same engine the same question. A
+skip is not charged as an attempt.
+
+Providers name that option as they please and are free to change it, so this is
+a heuristic: an unreadable model is reported as `null` and carries no
+conclusion, never a false match.
+
+### Giving up on a member
+
+Each attempt has a deadline, **120 seconds** by default, configurable per pool
+and disabled with 0. Past it the member is abandoned and the next one is tried.
+A deadline is not latency-based routing: it never reorders members, it only
+stops one from holding a request open forever. Timeouts are counted as their own
+failure kind, apart from a provider's refusal, because "too slow for us" and "it
+said no" call for different fixes.
+
+### Cooldowns that lengthen, and how to end one
+
+Capacity refusals arrive in clusters, so each consecutive refusal doubles the
+member's cooldown, up to an hour. A **success** resets it - nothing else is
+evidence that the provider has recovered - and `cooldown_strikes` on the calls
+sensor explains an unusually long wait.
+
+An authentication failure disables a member, and that verdict is persisted: one
+revoked key used to retire a provider for good, with deleting the config entry
+as the only way back. Two things end it now. Reloading the entry re-admits every
+disabled member, which is the closest thing to the user saying "try again". And
+the `ai_pool.reset_member` service clears the cooldown, the spent-allowance mark
+and the disable on one member, or on all of them:
+
+```yaml
+action: ai_pool.reset_member
+data:
+  pool: 01M1J3KZ0GTB2EDE0279N6R26J   # the pool's config entry
+  member: ai_task.google_ai_task     # optional; omit to reset every member
+```
+
 `Download diagnostics` on the config entry returns the same per-member data
 plus the routing policy and the pool-wide counters.
 

@@ -40,6 +40,7 @@ CONF_RPM_LIMIT: Final = "rpm_limit"
 CONF_WEIGHT: Final = "weight"
 CONF_COOLDOWN: Final = "cooldown_seconds"
 CONF_MAX_ATTEMPTS: Final = "max_attempts"
+CONF_TIMEOUT: Final = "timeout_seconds"
 CONF_STT_BUFFER_LIMIT: Final = "stt_buffer_limit"
 
 # --- Defaults ---------------------------------------------------------------
@@ -48,6 +49,13 @@ DEFAULT_RPM_LIMIT: Final = 0  # 0 means "no declared limit"
 DEFAULT_WEIGHT: Final = 1
 DEFAULT_COOLDOWN: Final = 300  # seconds a member sits out after a capacity error
 DEFAULT_MAX_ATTEMPTS: Final = 3
+# A member that has not answered in this long is abandoned and the next one is
+# tried. Generous on purpose - a slow answer is still an answer, and observed
+# durations reach a minute - but an unbounded wait is not a policy.
+DEFAULT_TIMEOUT: Final = 120
+# Ceiling for the doubling cooldown, so a provider having a bad day is retried
+# hourly rather than never.
+MAX_COOLDOWN: Final = 3600
 # Audio is buffered so a failed member can be retried with the same recording.
 DEFAULT_STT_BUFFER_LIMIT: Final = 8 * 1024 * 1024
 
@@ -57,6 +65,19 @@ STATUS_COOLDOWN: Final = "cooldown"
 STATUS_EXHAUSTED: Final = "exhausted"
 STATUS_DISABLED: Final = "disabled"
 STATUS_UNAVAILABLE: Final = "unavailable"
+
+# --- Events -----------------------------------------------------------------
+# Fired so automations can react to a degrading pool without polling sensors.
+EVENT_FAILOVER: Final = f"{DOMAIN}_failover"
+EVENT_EXHAUSTED: Final = f"{DOMAIN}_exhausted"
+
+# --- Services ---------------------------------------------------------------
+SERVICE_RESET_MEMBER: Final = "reset_member"
+ATTR_POOL: Final = "pool"
+ATTR_MEMBER: Final = "member"
+
+# --- Repairs ----------------------------------------------------------------
+ISSUE_DUPLICATE_MODEL: Final = "duplicate_model"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_TEMPLATE: Final = DOMAIN + ".{entry_id}"
