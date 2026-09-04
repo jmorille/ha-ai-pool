@@ -7,16 +7,20 @@ import logging
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     ATTR_CLEAR_COUNTERS,
     ATTR_MEMBER,
     ATTR_POOL,
+    CONF_MEMBERS,
     CONF_POOL_TYPE,
+    CONFIG_VERSION,
     DOMAIN,
     SERVICE_RESET_MEMBER,
 )
@@ -50,6 +54,37 @@ def _platforms(entry: ConfigEntry) -> list[Platform]:
     """Platforms to load for this entry."""
     pool_type = {**entry.data, **entry.options}[CONF_POOL_TYPE]
     return [POOL_PLATFORM[pool_type], Platform.SENSOR, Platform.BINARY_SENSOR]
+
+
+@callback
+def _prune_orphan_entities(hass: HomeAssistant, entry: ConfigEntry) -> list[str]:
+    """Remove registry entries for members the pool no longer has.
+
+    Sensors are only created for current members, but nothing ever removed the
+    ones belonging to a member that left: they lingered in the UI as orphans,
+    unavailable forever, with no way to tell them from a broken member.
+    """
+    members = [
+        item["entity_id"] for item in {**entry.data, **entry.options}[CONF_MEMBERS]
+    ]
+    expected = {
+        entry.entry_id,
+        f"{entry.entry_id}_fallback_rate",
+        f"{entry.entry_id}_no_healthy_member",
+    }
+    for member in members:
+        expected.add(f"{entry.entry_id}_{member}")
+        expected.add(f"{entry.entry_id}_{member}_latency")
+
+    registry = er.async_get(hass)
+    orphans = [
+        item.entity_id
+        for item in er.async_entries_for_config_entry(registry, entry.entry_id)
+        if item.unique_id not in expected
+    ]
+    for entity_id in orphans:
+        registry.async_remove(entity_id)
+    return orphans
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -98,14 +133,38 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Bring a config entry forward to the current schema.
+
+    Nothing to rewrite yet, and that is exactly why this is here: without the
+    hook, the first version bump would fail every existing entry with no way
+    back. Reject a version from the future rather than guess at it - the entry
+    then shows as needing a newer Home Assistant instead of misreading data.
+    """
+    return entry.version <= CONFIG_VERSION
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: AIPoolConfigEntry) -> bool:
     """Set up a pool from a config entry."""
+    if orphans := _prune_orphan_entities(hass, entry):
+        _LOGGER.info(
+            "Pool %s: removed entities for member(s) no longer in the pool: %s",
+            entry.title,
+            ", ".join(orphans),
+        )
+
     pool = AIPool(hass, entry)
     await pool.async_setup()
     entry.runtime_data = pool
 
     await hass.config_entries.async_forward_entry_setups(entry, _platforms(entry))
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    # Day counters are otherwise only rolled when the pool is used, so a pool
+    # called once a morning would show yesterday's numbers until it was next
+    # asked for something.
+    entry.async_on_unload(
+        async_track_time_change(hass, pool.async_roll_day, hour=0, minute=0, second=5)
+    )
     # Checked after the platforms are up, so the members' own entities are in
     # the registry and their models can be read.
     pool.async_check_models()

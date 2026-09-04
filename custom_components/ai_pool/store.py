@@ -18,7 +18,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -33,6 +33,9 @@ RATE_WINDOW_SECONDS = 60.0
 # A hard ceiling on the log, so a runaway caller cannot grow the stored state
 # without bound. Well above any free-tier per-minute allowance.
 MAX_REQUEST_LOG = 200
+
+# Seconds a request-path write waits, so a burst of calls costs one write.
+SAVE_DELAY = 15
 
 
 @dataclass
@@ -258,13 +261,34 @@ class PoolState:
         return self.members[key]
 
 
+class PoolStore(Store[dict]):
+    """The storage handle, with a migration path that exists from the start.
+
+    Without an override, bumping ``STORAGE_VERSION`` raises
+    ``NotImplementedError`` on the next load and takes the config entry down
+    with it - so the hook has to be here before it is needed, not after.
+    """
+
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: dict
+    ) -> dict:
+        """Bring stored data forward to the current version.
+
+        Nothing needs rewriting yet: every schema change so far has only added
+        fields, and ``from_dict`` ignores what it does not recognise in either
+        direction. Data from a *newer* version is returned untouched for the
+        same reason - a downgrade should lose the new fields, not the counters.
+        """
+        return old_data
+
+
 class UsageStore:
     """Thin wrapper over Home Assistant's Store with day-rollover semantics."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         """Initialise the store for one config entry."""
         self._hass = hass
-        self._store: Store[dict] = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}")
+        self._store = PoolStore(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}")
         self.state = PoolState()
 
     async def async_load(self) -> PoolState:
@@ -282,17 +306,29 @@ class UsageStore:
         self.roll_day()
         return self.state
 
+    def _as_dict(self) -> dict:
+        """Serialise the whole state for the storage helper."""
+        return {
+            "cursor": self.state.cursor,
+            "members": {
+                key: value.as_dict() for key, value in self.state.members.items()
+            },
+            "stats": self.state.stats.as_dict(),
+        }
+
     async def async_save(self) -> None:
-        """Persist current state."""
-        await self._store.async_save(
-            {
-                "cursor": self.state.cursor,
-                "members": {
-                    key: value.as_dict() for key, value in self.state.members.items()
-                },
-                "stats": self.state.stats.as_dict(),
-            }
-        )
+        """Persist current state immediately."""
+        await self._store.async_save(self._as_dict())
+
+    @callback
+    def async_schedule_save(self) -> None:
+        """Persist current state shortly, coalescing bursts into one write.
+
+        Used on the request path. A write per AI call is a write per call to
+        flash storage for data that tolerates a few seconds of delay, and Home
+        Assistant flushes a delayed save on shutdown, so nothing is lost.
+        """
+        self._store.async_delay_save(self._as_dict, SAVE_DELAY)
 
     def clear_disabled(self) -> list[str]:
         """Re-admit every member disabled by a permanent failure.
@@ -306,6 +342,18 @@ class UsageStore:
         for key in cleared:
             self.state.member(key).disabled_reason = None
         return cleared
+
+    def prune(self, keep: set[str]) -> list[str]:
+        """Forget members that are no longer in the pool.
+
+        State is created on first use and was never removed, so a member
+        dropped from the pool kept its counters in storage for good and the day
+        roll went on resetting them every midnight.
+        """
+        dropped = [key for key in self.state.members if key not in keep]
+        for key in dropped:
+            del self.state.members[key]
+        return dropped
 
     async def async_remove(self) -> None:
         """Delete persisted state, used when the config entry is removed."""

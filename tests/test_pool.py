@@ -104,7 +104,7 @@ async def test_first_healthy_member_serves(hass: HomeAssistant, available) -> No
 
     assert await pool.async_execute(run) == "ok"
     assert used == [A]
-    assert pool.snapshot()[0]["calls_today"] == 1
+    assert pool.snapshot()[0].calls_today == 1
 
 
 async def test_capacity_failure_falls_through_and_cools_down(
@@ -124,11 +124,11 @@ async def test_capacity_failure_falls_through_and_cools_down(
     assert await pool.async_execute(run) == "ok"
     assert used == [A, B]
 
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_COOLDOWN
-    assert rows[A]["failures_today"] == 1
-    assert rows[A]["calls_today"] == 0
-    assert rows[B]["calls_today"] == 1
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_COOLDOWN
+    assert rows[A].failures_today == 1
+    assert rows[A].calls_today == 0
+    assert rows[B].calls_today == 1
 
 
 async def test_quota_failure_exhausts_for_the_day(
@@ -143,8 +143,8 @@ async def test_quota_failure_exhausts_for_the_day(
         return "ok"
 
     await pool.async_execute(run)
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_EXHAUSTED
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_EXHAUSTED
 
 
 async def test_auth_failure_disables_the_member(hass: HomeAssistant, available) -> None:
@@ -158,8 +158,8 @@ async def test_auth_failure_disables_the_member(hass: HomeAssistant, available) 
         return "ok"
 
     await pool.async_execute(run)
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_DISABLED
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_DISABLED
 
     # A disabled member is not attempted again at all.
     used: list[str] = []
@@ -231,9 +231,9 @@ async def test_declared_limit_pushes_member_to_the_back(
     await pool.async_execute(run)  # A is spent, B serves
     assert used == [A, B]
 
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_EXHAUSTED
-    assert rows[A]["remaining"] == 0
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_EXHAUSTED
+    assert rows[A].remaining == 0
 
 
 async def test_spent_member_is_still_tried_as_a_last_resort(
@@ -271,8 +271,8 @@ async def test_unavailable_member_is_skipped(hass: HomeAssistant, available) -> 
     await pool.async_execute(run)
     assert used == [B]
 
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_UNAVAILABLE
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_UNAVAILABLE
 
 
 async def test_missing_member_entity_is_unavailable(
@@ -280,8 +280,8 @@ async def test_missing_member_entity_is_unavailable(
 ) -> None:
     available(B)
     pool = await make_pool(hass, build_entry([A, B]))
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_UNAVAILABLE
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_UNAVAILABLE
 
 
 async def test_cooldown_expires(hass: HomeAssistant, available) -> None:
@@ -298,8 +298,8 @@ async def test_cooldown_expires(hass: HomeAssistant, available) -> None:
     # Rewind the cooldown to simulate time passing.
     state.cooldown_until = (dt_util.utcnow() - timedelta(seconds=1)).isoformat()
 
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_HEALTHY
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_HEALTHY
 
 
 async def test_counters_reset_on_a_new_local_day(
@@ -313,12 +313,12 @@ async def test_counters_reset_on_a_new_local_day(
         return "ok"
 
     await pool.async_execute(run)
-    assert pool.snapshot()[0]["calls_today"] == 1
+    assert pool.snapshot()[0].calls_today == 1
 
     # Pretend the stored counters belong to a previous day.
     pool.store.state.member(A).day = "2000-01-01"
     pool.store.roll_day()
-    assert pool.snapshot()[0]["calls_today"] == 0
+    assert pool.snapshot()[0].calls_today == 0
 
 
 async def test_empty_pool_raises(hass: HomeAssistant) -> None:
@@ -343,9 +343,9 @@ async def test_last_error_is_recorded_with_its_kind(
         return "ok"
 
     await pool.async_execute(run)
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["last_error"].startswith("capacity:")
-    assert rows[B]["last_success"] is not None
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].last_error.startswith("capacity:")
+    assert rows[B].last_success is not None
 
 
 async def test_member_with_unknown_state_is_healthy(hass: HomeAssistant) -> None:
@@ -357,8 +357,8 @@ async def test_member_with_unknown_state_is_healthy(hass: HomeAssistant) -> None
     hass.states.async_set(A, "unknown")
     pool = await make_pool(hass, build_entry([A]))
 
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_HEALTHY
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_HEALTHY
 
 
 # --- Metrics ----------------------------------------------------------------
@@ -388,13 +388,13 @@ async def test_latency_is_recorded_for_successes_only(
 
     await pool.async_execute(run)
 
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["latency_samples"] == 0
-    assert rows[A]["latency_last"] is None
-    assert rows[B]["latency_samples"] == 1
-    assert rows[B]["latency_last"] >= 0
-    assert rows[B]["latency_average"] == rows[B]["latency_last"]
-    assert rows[B]["latency_recent_average"] == rows[B]["latency_last"]
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].latency_samples == 0
+    assert rows[A].latency_last is None
+    assert rows[B].latency_samples == 1
+    assert rows[B].latency_last >= 0
+    assert rows[B].latency_average == rows[B].latency_last
+    assert rows[B].latency_recent_average == rows[B].latency_last
 
 
 async def test_failures_are_counted_by_kind(hass: HomeAssistant, available) -> None:
@@ -411,9 +411,9 @@ async def test_failures_are_counted_by_kind(hass: HomeAssistant, available) -> N
             await pool.async_execute(run)
 
     row = pool.snapshot()[0]
-    assert row["failures_by_kind"] == {"capacity": 1, "quota": 1}
-    assert row["failures_today"] == 2
-    assert row["success_rate"] == 0.0
+    assert row.failures_by_kind == {"capacity": 1, "quota": 1}
+    assert row.failures_today == 2
+    assert row.success_rate == 0.0
 
 
 async def test_success_rate_mixes_calls_and_failures(
@@ -432,7 +432,7 @@ async def test_success_rate_mixes_calls_and_failures(
     with pytest.raises(AllMembersFailedError):
         await pool.async_execute(run)
 
-    assert pool.snapshot()[0]["success_rate"] == 50.0
+    assert pool.snapshot()[0].success_rate == 50.0
 
 
 async def test_routing_snapshot_tracks_fallbacks(
@@ -504,7 +504,7 @@ async def test_day_roll_resets_metrics_but_keeps_recent_latency(
         return "ok"
 
     await pool.async_execute(run)
-    recent = pool.snapshot()[0]["latency_recent_average"]
+    recent = pool.snapshot()[0].latency_recent_average
     assert recent is not None
 
     pool.store.state.member(A).day = "2000-01-01"
@@ -512,10 +512,10 @@ async def test_day_roll_resets_metrics_but_keeps_recent_latency(
     pool.store.roll_day()
 
     row = pool.snapshot()[0]
-    assert row["latency_samples"] == 0
-    assert row["latency_average"] is None
-    assert row["failures_by_kind"] == {}
-    assert row["latency_recent_average"] == recent
+    assert row.latency_samples == 0
+    assert row.latency_average is None
+    assert row.failures_by_kind == {}
+    assert row.latency_recent_average == recent
     assert pool.routing_snapshot()["requests_today"] == 0
 
 
@@ -533,11 +533,11 @@ async def test_requests_count_attempts_not_successes(
 
     await pool.async_execute(run)
 
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["calls_today"] == 0
-    assert rows[A]["requests_today"] == 1
-    assert rows[B]["calls_today"] == 1
-    assert rows[B]["requests_today"] == 1
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].calls_today == 0
+    assert rows[A].requests_today == 1
+    assert rows[B].calls_today == 1
+    assert rows[B].requests_today == 1
 
 
 async def test_rate_headroom_uses_declared_limits(
@@ -554,11 +554,11 @@ async def test_rate_headroom_uses_declared_limits(
     await pool.async_execute(run)
 
     row = pool.snapshot()[0]
-    assert row["requests_last_minute"] == 2
-    assert row["rpm_limit"] == 10
-    assert row["rpm_remaining"] == 8
-    assert row["daily_limit"] == 200
-    assert row["rpd_remaining"] == 198
+    assert row.requests_last_minute == 2
+    assert row.rpm_limit == 10
+    assert row.rpm_remaining == 8
+    assert row.daily_limit == 200
+    assert row.rpd_remaining == 198
 
 
 async def test_undeclared_limits_report_no_headroom(
@@ -574,10 +574,10 @@ async def test_undeclared_limits_report_no_headroom(
     await pool.async_execute(run)
 
     row = pool.snapshot()[0]
-    assert row["requests_last_minute"] == 1
-    assert row["rpm_limit"] is None
-    assert row["rpm_remaining"] is None
-    assert row["rpd_remaining"] is None
+    assert row.requests_last_minute == 1
+    assert row.rpm_limit is None
+    assert row.rpm_remaining is None
+    assert row.rpd_remaining is None
 
 
 async def test_input_size_is_tracked(hass: HomeAssistant, available) -> None:
@@ -592,8 +592,8 @@ async def test_input_size_is_tracked(hass: HomeAssistant, available) -> None:
     await pool.async_execute(run, size=80)
 
     row = pool.snapshot()[0]
-    assert row["input_chars_today"] == 200
-    assert row["input_chars_last_minute"] == 200
+    assert row.input_chars_today == 200
+    assert row.input_chars_last_minute == 200
 
 
 def test_request_window_forgets_older_requests() -> None:

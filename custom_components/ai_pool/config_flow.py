@@ -26,6 +26,7 @@ from .const import (
     CONF_STRATEGY,
     CONF_TIMEOUT,
     CONF_WEIGHT,
+    CONFIG_VERSION,
     DEFAULT_COOLDOWN,
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_STRATEGY,
@@ -191,7 +192,7 @@ def _build_members(
 class AIPoolConfigFlow(ConfigFlow, domain=DOMAIN):
     """Create a pool."""
 
-    VERSION = 1
+    VERSION = CONFIG_VERSION
 
     def __init__(self) -> None:
         """Start with an empty draft."""
@@ -351,10 +352,15 @@ class AIPoolOptionsFlow(OptionsFlow):
                     errors={"base": "duplicate_members"},
                     description_placeholders={"members": ", ".join(self._member_ids)},
                 )
+            # Written back into `data`, not left in `options`. An options flow
+            # normally stores its result in `options`, which would leave two
+            # copies of the same configuration - `data` frozen at creation and
+            # `options` current - and every reader merging the two. One copy
+            # means a future migration has one place to fix.
             self.hass.config_entries.async_update_entry(
-                self.config_entry, unique_id=key
+                self.config_entry, data=data, options={}, unique_id=key
             )
-            return self.async_create_entry(data=data)
+            return self.async_create_entry(data={})
 
         return self.async_show_form(
             step_id="limits",

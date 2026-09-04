@@ -105,7 +105,7 @@ async def setup_pool(
 
 def status_of(entry: MockConfigEntry, entity_id: str) -> str:
     """Look up one member's status in the pool snapshot."""
-    rows = {row["entity_id"]: row for row in entry.runtime_data.snapshot()}
+    rows = {row.entity_id: row for row in entry.runtime_data.snapshot()}
     return rows[entity_id]["status"]
 
 
@@ -537,6 +537,7 @@ async def test_diagnostics_report_policy_and_members(hass: HomeAssistant) -> Non
     assert data["strategy"] == STRATEGY_PRIORITY
     assert data["max_attempts"] == 3
     assert data["cooldown_seconds"] == 300
+    # Diagnostics is a JSON dump, so the views arrive flattened to mappings.
     members = {row["entity_id"]: row for row in data["members"]}
     assert members["ai_task.member_a"]["daily_limit"] == 25
     assert members["ai_task.member_a"]["remaining"] == 25

@@ -29,6 +29,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .pool import AIPool
+from .views import MemberView
 
 PARALLEL_UPDATES = 0
 
@@ -104,10 +105,10 @@ class AIPoolMemberSensor(AIPoolSensor):
         self._member_id = member_id
         self._attr_translation_placeholders = {"member": label}
 
-    def _row(self) -> dict[str, Any] | None:
+    def _row(self) -> MemberView | None:
         """Locate this member in the pool snapshot."""
         for row in self._pool.snapshot():
-            if row["entity_id"] == self._member_id:
+            if row.entity_id == self._member_id:
                 return row
         return None
 
@@ -130,7 +131,7 @@ class AIPoolCallsSensor(AIPoolMemberSensor):
     def native_value(self) -> int | None:
         """Calls served today."""
         row = self._row()
-        return None if row is None else row["calls_today"]
+        return None if row is None else row.calls_today
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -139,40 +140,40 @@ class AIPoolCallsSensor(AIPoolMemberSensor):
         if row is None:
             return {}
         attributes = {
-            "status": row["status"],
+            "status": row.status,
             # Which engine is really behind this member. Two members sharing
             # one is the failure the pool cannot route around, and a dashboard
             # is where that is spotted.
-            "model": row["model"],
-            "failures_today": row["failures_today"],
-            "success_rate": row["success_rate"],
-            "daily_limit": row["daily_limit"],
-            "remaining": row["remaining"],
-            "weight": row["weight"],
-            "cooldown_until": row["cooldown_until"],
+            "model": row.model,
+            "failures_today": row.failures_today,
+            "success_rate": row.success_rate,
+            "daily_limit": row.daily_limit,
+            "remaining": row.remaining,
+            "weight": row.weight,
+            "cooldown_until": row.cooldown_until,
             # Consecutive capacity refusals, which is what makes each cooldown
             # longer than the last.
-            "cooldown_strikes": row["cooldown_strikes"],
-            "last_error": row["last_error"],
-            "last_success": row["last_success"],
+            "cooldown_strikes": row.cooldown_strikes,
+            "last_error": row.last_error,
+            "last_success": row.last_success,
             # Rate-limit tracking. Providers meter requests, and a refusal is
             # a request: requests_today is therefore the pessimistic reading of
             # the same allowance that calls_today reads optimistically. The
             # provider's own counter sits between the two and is not visible
             # from here.
-            "requests_today": row["requests_today"],
-            "rpd_remaining": row["rpd_remaining"],
-            "requests_last_minute": row["requests_last_minute"],
-            "rpm_limit": row["rpm_limit"],
-            "rpm_remaining": row["rpm_remaining"],
+            "requests_today": row.requests_today,
+            "rpd_remaining": row.rpd_remaining,
+            "requests_last_minute": row.requests_last_minute,
+            "rpm_limit": row.rpm_limit,
+            "rpm_remaining": row.rpm_remaining,
             # Characters, not tokens: no token count reaches the integration.
             # Roughly four characters per token is the usual rule of thumb.
-            "input_chars_today": row["input_chars_today"],
-            "input_chars_last_minute": row["input_chars_last_minute"],
+            "input_chars_today": row.input_chars_today,
+            "input_chars_last_minute": row.input_chars_last_minute,
         }
         # One key per observed failure kind rather than a nested dict, so each
         # is usable on its own in a template or a dashboard card.
-        for kind, count in row["failures_by_kind"].items():
+        for kind, count in row.failures_by_kind.items():
             attributes[f"failures_{kind}"] = count
         return attributes
 
@@ -202,7 +203,7 @@ class AIPoolLatencySensor(AIPoolMemberSensor):
     def native_value(self) -> float | None:
         """Duration of the last successful call, in seconds."""
         row = self._row()
-        return None if row is None else row["latency_last"]
+        return None if row is None else row.latency_last
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -211,13 +212,13 @@ class AIPoolLatencySensor(AIPoolMemberSensor):
         if row is None:
             return {}
         return {
-            "average_today": row["latency_average"],
-            "min_today": row["latency_min"],
-            "max_today": row["latency_max"],
-            "samples_today": row["latency_samples"],
+            "average_today": row.latency_average,
+            "min_today": row.latency_min,
+            "max_today": row.latency_max,
+            "samples_today": row.latency_samples,
             # Deliberately not day-scoped: the recent window answers "how fast
             # is it right now", which a daily average hides after a bad morning.
-            "recent_average": row["latency_recent_average"],
+            "recent_average": row.latency_recent_average,
         }
 
 

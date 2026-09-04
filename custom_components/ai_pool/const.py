@@ -61,6 +61,10 @@ MAX_COOLDOWN: Final = 3600
 # common multiple of 1..10, which divides every group size a sane pool can
 # have, so wrapping never lands two calls on the same member.
 CURSOR_MODULUS: Final = 2520
+# How long a member's resolved model is trusted. It only changes when somebody
+# edits another integration, so noticing late costs nothing and it spares a
+# registry walk per member per sensor read.
+MODEL_CACHE_TTL: Final = 300
 # Audio is buffered so a failed member can be retried with the same recording.
 DEFAULT_STT_BUFFER_LIMIT: Final = 8 * 1024 * 1024
 
@@ -87,6 +91,10 @@ ATTR_CLEAR_COUNTERS: Final = "clear_counters"
 
 # --- Repairs ----------------------------------------------------------------
 ISSUE_DUPLICATE_MODEL: Final = "duplicate_model"
+
+# Config-entry schema version. Shared by the flow that stamps it and the
+# migration hook that has to recognise it, so neither can drift from the other.
+CONFIG_VERSION: Final = 1
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_TEMPLATE: Final = DOMAIN + ".{entry_id}"

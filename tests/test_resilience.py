@@ -245,11 +245,11 @@ async def test_a_member_that_hangs_is_abandoned(hass: HomeAssistant, available) 
 
     assert await pool.async_execute(run) == "ok"
 
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["failures_by_kind"] == {FailureKind.TIMEOUT.value: 1}
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].failures_by_kind == {FailureKind.TIMEOUT.value: 1}
     # Giving up on a member says nothing about its allowance or its health.
-    assert rows[A]["status"] == STATUS_HEALTHY
-    assert rows[B]["calls_today"] == 1
+    assert rows[A].status == STATUS_HEALTHY
+    assert rows[B].calls_today == 1
 
 
 async def test_zero_timeout_waits(hass: HomeAssistant, available) -> None:
@@ -282,15 +282,15 @@ async def test_an_auth_failure_no_longer_retires_a_member(
         return "ok"
 
     await pool.async_execute(run)
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_DISABLED
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_DISABLED
 
     # Reloading the entry is the user saying "try again", and it is the only
     # escape a persisted flag would otherwise have.
     reloaded = AIPool(hass, entry)
     await reloaded.async_setup()
-    rows = {row["entity_id"]: row for row in reloaded.snapshot()}
-    assert rows[A]["status"] == STATUS_HEALTHY
+    rows = {row.entity_id: row for row in reloaded.snapshot()}
+    assert rows[A].status == STATUS_HEALTHY
 
 
 async def test_reset_reports_only_members_that_were_held(
@@ -306,10 +306,10 @@ async def test_reset_reports_only_members_that_were_held(
         return "ok"
 
     await pool.async_execute(run)
-    assert pool.snapshot()[0]["status"] == STATUS_COOLDOWN
+    assert pool.snapshot()[0].status == STATUS_COOLDOWN
 
     assert await pool.async_reset_member() == [A]
-    assert pool.snapshot()[0]["status"] == STATUS_HEALTHY
+    assert pool.snapshot()[0].status == STATUS_HEALTHY
     # Nothing is held back any more, so a second reset has nothing to report.
     assert await pool.async_reset_member() == []
 
@@ -330,7 +330,7 @@ async def test_reset_member_service_clears_one_member(
 
     pool: AIPool = entry.runtime_data
     pool.store.state.member(A).disabled_reason = "authentication"
-    assert pool.snapshot()[0]["status"] == STATUS_DISABLED
+    assert pool.snapshot()[0].status == STATUS_DISABLED
 
     await hass.services.async_call(
         DOMAIN,
@@ -338,7 +338,7 @@ async def test_reset_member_service_clears_one_member(
         {"pool": entry.entry_id, "member": A},
         blocking=True,
     )
-    assert pool.snapshot()[0]["status"] == STATUS_HEALTHY
+    assert pool.snapshot()[0].status == STATUS_HEALTHY
 
 
 async def test_reset_member_service_rejects_a_stranger(
@@ -499,7 +499,7 @@ async def test_strikes_are_reported(hass: HomeAssistant, available) -> None:
     with pytest.raises(AllMembersFailedError):
         await pool.async_execute(run)
 
-    assert pool.snapshot()[0]["cooldown_strikes"] == 1
+    assert pool.snapshot()[0].cooldown_strikes == 1
 
 
 async def test_calls_sensor_carries_model_and_strikes(
@@ -622,9 +622,9 @@ async def test_a_member_at_its_rpm_ceiling_is_demoted_not_dropped(
     await pool.async_execute(run)
     assert served == [A, A]
 
-    rows = {row["entity_id"]: row for row in pool.snapshot()}
-    assert rows[A]["status"] == STATUS_THROTTLED
-    assert rows[A]["rpm_remaining"] == 0
+    rows = {row.entity_id: row for row in pool.snapshot()}
+    assert rows[A].status == STATUS_THROTTLED
+    assert rows[A].rpm_remaining == 0
 
     # Third call goes to B, which is not throttled.
     await pool.async_execute(run)
@@ -648,18 +648,18 @@ async def test_reset_sees_a_locally_spent_allowance(
 
     await pool.async_execute(run)
     await pool.async_execute(run)
-    assert pool.snapshot()[0]["status"] == STATUS_EXHAUSTED
+    assert pool.snapshot()[0].status == STATUS_EXHAUSTED
 
     # The member is held back, and the service says so.
     assert await pool.async_reset_member(A) == [A]
     # But the allowance is counted from our own counter, so it takes the
     # counters going with it.
-    assert pool.snapshot()[0]["status"] == STATUS_EXHAUSTED
+    assert pool.snapshot()[0].status == STATUS_EXHAUSTED
 
     assert await pool.async_reset_member(A, clear_counters=True) == [A]
     row = pool.snapshot()[0]
-    assert row["status"] == STATUS_HEALTHY
-    assert row["calls_today"] == 0
+    assert row.status == STATUS_HEALTHY
+    assert row.calls_today == 0
 
 
 async def test_the_duplicate_model_repair_does_not_outlive_the_pool(

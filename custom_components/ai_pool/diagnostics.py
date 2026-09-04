@@ -25,5 +25,5 @@ async def async_get_config_entry_diagnostics(
         "max_attempts": pool.max_attempts,
         "cooldown_seconds": pool.cooldown.total_seconds(),
         "cursor": pool.store.state.cursor,
-        "members": pool.snapshot(),
+        "members": [view.as_dict() for view in pool.snapshot()],
     }

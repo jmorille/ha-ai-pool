@@ -44,6 +44,7 @@ from .const import (
     EVENT_FAILOVER,
     ISSUE_DUPLICATE_MODEL,
     MAX_COOLDOWN,
+    MODEL_CACHE_TTL,
     STATUS_COOLDOWN,
     STATUS_DISABLED,
     STATUS_EXHAUSTED,
@@ -55,6 +56,7 @@ from .errors import FailureKind, Verdict, classify
 from .models import member_model, shared_models
 from .store import UsageStore, days_ahead, parse_iso
 from .strategies import Candidate, order_candidates
+from .views import MemberView
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,6 +112,8 @@ class AIPool:
         self.entry = entry
         self.store = UsageStore(hass, entry.entry_id)
         self._listeners: list[Callable[[], None]] = []
+        self._models: dict[str, str | None] = {}
+        self._models_expire = 0.0
 
     # --- Configuration ------------------------------------------------------
 
@@ -153,8 +157,18 @@ class AIPool:
     # --- Lifecycle ----------------------------------------------------------
 
     async def async_setup(self) -> None:
-        """Load persisted counters and re-admit members held back for good."""
+        """Load persisted counters, purge departed members, re-admit the held."""
         await self.store.async_load()
+        dirty = False
+
+        if dropped := self.store.prune({config.entity_id for config in self.members}):
+            _LOGGER.info(
+                "Pool %s: forgetting counters for member(s) no longer in the pool: %s",
+                self.entry.title,
+                ", ".join(dropped),
+            )
+            dirty = True
+
         # Setting up or reloading the entry is the user's way of saying "try
         # again", and it is the only escape from a permanent disable.
         if cleared := self.store.clear_disabled():
@@ -163,6 +177,9 @@ class AIPool:
                 self.entry.title,
                 ", ".join(cleared),
             )
+            dirty = True
+
+        if dirty:
             await self.store.async_save()
 
     async def async_reset_member(
@@ -208,6 +225,18 @@ class AIPool:
         self._notify()
         return reset
 
+    async def async_roll_day(self, now: Any = None) -> None:
+        """Zero the day counters when the local day changes.
+
+        Driven by a midnight trigger. The request path rolls them too, because
+        there correctness depends on it, but a pool called once a morning would
+        otherwise show yesterday's numbers until it was next used.
+        """
+        if self.store.roll_day():
+            self._models.clear()
+            self.store.async_schedule_save()
+            self._notify()
+
     async def async_remove(self) -> None:
         """Drop persisted counters when the entry is deleted."""
         await self.store.async_remove()
@@ -231,8 +260,21 @@ class AIPool:
     # --- Models -------------------------------------------------------------
 
     def member_model(self, entity_id: str) -> str | None:
-        """Which provider model backs a member, as far as it can be read."""
-        return member_model(self.hass, entity_id)
+        """Which provider model backs a member, as far as it can be read.
+
+        Cached for a few minutes. Resolving it walks the entity registry and
+        another integration's config entry, and every sensor read asks for
+        every member - so with N members and 2N+1 sensors an uncached lookup
+        fanned out as N squared. A model only changes when somebody edits that
+        other integration, which the cache is allowed to notice late.
+        """
+        now = time.monotonic()
+        if now >= self._models_expire:
+            self._models.clear()
+            self._models_expire = now + MODEL_CACHE_TTL
+        if entity_id not in self._models:
+            self._models[entity_id] = member_model(self.hass, entity_id)
+        return self._models[entity_id]
 
     def duplicate_models(self) -> dict[str, list[str]]:
         """Models used by more than one member of this pool."""
@@ -334,10 +376,15 @@ class AIPool:
 
         return STATUS_HEALTHY
 
-    def snapshot(self) -> list[dict[str, Any]]:
-        """Per-member view for sensors and diagnostics."""
-        self.store.roll_day()
-        result: list[dict[str, Any]] = []
+    def snapshot(self) -> list[MemberView]:
+        """Per-member view for sensors and diagnostics.
+
+        A pure read. It used to roll the day as its first act, which made
+        looking at a sensor mutate persisted state; the roll now has its own
+        call sites - the request path, where it must be exact, and a midnight
+        trigger, so displays are right without anyone asking.
+        """
+        result: list[MemberView] = []
         for member in self.members:
             state = self.store.state.member(member.entity_id)
             remaining: int | None = None
@@ -353,41 +400,45 @@ class AIPool:
             if member.rpm_limit:
                 rpm_remaining = max(member.rpm_limit - per_minute, 0)
             result.append(
-                {
-                    "entity_id": member.entity_id,
-                    "status": self.member_status(member),
-                    "model": self.member_model(member.entity_id),
-                    "calls_today": state.calls,
-                    "failures_today": state.failures,
-                    "daily_limit": member.daily_limit or None,
-                    "remaining": remaining,
-                    "requests_today": state.requests,
-                    "rpd_remaining": rpd_remaining,
-                    "requests_last_minute": per_minute,
-                    "rpm_limit": member.rpm_limit or None,
-                    "rpm_remaining": rpm_remaining,
-                    "input_chars_today": state.input_chars,
-                    "input_chars_last_minute": state.input_chars_last_minute(),
-                    "weight": member.weight,
-                    "cooldown_until": state.cooldown_until,
-                    "cooldown_strikes": state.cooldown_strikes,
-                    "last_error": state.last_error,
-                    "last_success": state.last_success,
-                    "failures_by_kind": dict(state.failures_by_kind),
-                    "success_rate": _rounded(state.success_rate, 1),
-                    "latency_last": _rounded(state.latency_last),
-                    "latency_average": _rounded(state.latency_average),
-                    "latency_min": _rounded(state.latency_min),
-                    "latency_max": _rounded(state.latency_max),
-                    "latency_recent_average": _rounded(state.latency_recent_average),
-                    "latency_samples": state.latency_count,
-                }
+                MemberView(
+                    entity_id=member.entity_id,
+                    status=self.member_status(member),
+                    model=self.member_model(member.entity_id),
+                    calls_today=state.calls,
+                    failures_today=state.failures,
+                    daily_limit=member.daily_limit or None,
+                    remaining=remaining,
+                    requests_today=state.requests,
+                    rpd_remaining=rpd_remaining,
+                    requests_last_minute=per_minute,
+                    rpm_limit=member.rpm_limit or None,
+                    rpm_remaining=rpm_remaining,
+                    input_chars_today=state.input_chars,
+                    input_chars_last_minute=state.input_chars_last_minute(),
+                    weight=member.weight,
+                    cooldown_until=state.cooldown_until,
+                    cooldown_strikes=state.cooldown_strikes,
+                    last_error=state.last_error,
+                    last_success=state.last_success,
+                    failures_by_kind=dict(state.failures_by_kind),
+                    success_rate=_rounded(state.success_rate, 1),
+                    latency_last=_rounded(state.latency_last),
+                    latency_average=_rounded(state.latency_average),
+                    latency_min=_rounded(state.latency_min),
+                    latency_max=_rounded(state.latency_max),
+                    latency_recent_average=_rounded(state.latency_recent_average),
+                    latency_samples=state.latency_count,
+                )
             )
         return result
 
     def routing_snapshot(self) -> dict[str, Any]:
-        """Pool-wide view of what the routing itself cost today."""
-        self.store.roll_day()
+        """Pool-wide view of what the routing itself cost today.
+
+        Left as a mapping, unlike the per-member view: every consumer either
+        dumps it wholesale or reads one key by name, so naming the fields twice
+        would buy nothing.
+        """
         stats = self.store.state.stats
         statuses = [self.member_status(member) for member in self.members]
         return {
@@ -545,12 +596,12 @@ class AIPool:
             # so it is what resets the escalating cooldown.
             state.cooldown_strikes = 0
             self._record_request(attempts, member.entity_id, served=True)
-            await self.store.async_save()
+            self.store.async_schedule_save()
             self._notify()
             return result
 
         self._record_request(attempts, None, served=False)
-        await self.store.async_save()
+        self.store.async_schedule_save()
         self._fire(
             EVENT_EXHAUSTED,
             attempts=attempts,
