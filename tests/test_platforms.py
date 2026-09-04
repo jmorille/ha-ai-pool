@@ -28,6 +28,7 @@ from custom_components.ai_pool.const import (
     CONF_MEMBERS,
     CONF_POOL_TYPE,
     CONF_STRATEGY,
+    CONF_STT_BUFFER_LIMIT,
     CONF_WEIGHT,
     DOMAIN,
     STATUS_COOLDOWN,
@@ -69,7 +70,11 @@ async def publish_members(
 
 
 async def setup_pool(
-    hass: HomeAssistant, pool_type: str, *, limits: dict[str, int] | None = None
+    hass: HomeAssistant,
+    pool_type: str,
+    *,
+    limits: dict[str, int] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> MockConfigEntry:
     """Set up a pool of the given type over ``member_a`` and ``member_b``."""
     limits = limits or {}
@@ -81,6 +86,7 @@ async def setup_pool(
             CONF_STRATEGY: STRATEGY_PRIORITY,
             CONF_COOLDOWN: 300,
             CONF_MAX_ATTEMPTS: 3,
+            **(extra or {}),
             CONF_MEMBERS: [
                 {
                     "entity_id": f"{pool_type}.{name}",
@@ -471,6 +477,37 @@ async def test_stt_pool_replays_the_recording_to_the_next_member(
     assert result.text == "transcript from b"
     assert member_a.received == recording
     assert member_b.received == recording
+
+
+async def test_stt_pool_does_not_replay_a_clipped_recording(
+    hass: HomeAssistant,
+) -> None:
+    """A recording too long to buffer gets one attempt and no failover.
+
+    Handing the same half-sentence to a second member cannot produce a better
+    transcript; it only multiplies the cost of a request already compromised.
+    """
+    assert await async_setup_component(hass, "stt", {})
+    member_a = FakeSTTMember(A, error=CAPACITY)
+    member_b = FakeSTTMember(B, text="transcript from b")
+    await publish_members(hass, "stt", [member_a, member_b])
+    await setup_pool(hass, "stt", extra={CONF_STT_BUFFER_LIMIT: 2048})
+
+    recording = b"0123456789" * 900  # 9000 bytes, well over the 2 KiB buffer
+
+    async def stream() -> AsyncIterable[bytes]:
+        for offset in range(0, len(recording), 1024):
+            yield recording[offset : offset + 1024]
+
+    pool_entity = stt.async_get_speech_to_text_entity(hass, "stt.test_pool")
+    assert pool_entity is not None
+    with pytest.raises(HomeAssistantError):
+        await pool_entity.async_process_audio_stream(audio_metadata(), stream())
+
+    # The first member was tried with what fitted; the second was never asked.
+    assert member_a.calls == 1
+    assert len(member_a.received) <= 2048
+    assert member_b.calls == 0
 
 
 async def test_stt_pool_intersects_audio_capabilities(hass: HomeAssistant) -> None:

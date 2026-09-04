@@ -163,4 +163,16 @@ class AIPoolSTTEntity(AIPoolEntity, stt.SpeechToTextEntity):
 
         # Audio bytes rather than characters: not comparable to a text
         # prompt, but the only measure of how much this request weighs.
-        return await self.pool.async_execute(run, description="stt", size=len(audio))
+        # Audio bytes rather than characters: not comparable to a text prompt,
+        # but the only measure of how much this request weighs.
+        #
+        # A clipped recording gets one attempt and no failover. Handing the
+        # same half-sentence to a second member cannot produce a better
+        # transcript, and doing it three times only multiplies the cost of a
+        # request that was already compromised.
+        return await self.pool.async_execute(
+            run,
+            description="stt",
+            size=len(audio),
+            attempt_limit=1 if truncated else None,
+        )

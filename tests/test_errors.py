@@ -100,3 +100,26 @@ def test_every_verdict_allows_trying_the_next_member() -> None:
     """
     for message in (GOOGLE_503, GOOGLE_429, "401 Unauthorized", "boom"):
         assert classify(message).should_try_next_member is True
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        # Google returns a spent allowance as 403 as readily as 429, and AUTH
+        # is the one verdict that stops a member from ever being tried again.
+        (
+            '{"error": {"code": 403, "message": "Quota exceeded for quota '
+            'metric \'Generate Content requests\'", "status": '
+            '"PERMISSION_DENIED"}}',
+            FailureKind.QUOTA,
+        ),
+        ("403 rateLimitExceeded", FailureKind.QUOTA),
+        # With no quota evidence, a 403 is still an authentication problem.
+        ("403 Forbidden", FailureKind.AUTH),
+        ("403 The caller does not have permission", FailureKind.AUTH),
+    ],
+)
+def test_quota_evidence_outranks_a_bare_status_code(
+    message: str, expected: FailureKind
+) -> None:
+    assert classify(message).kind is expected

@@ -160,6 +160,17 @@ def _limits_schema(member_ids: list[str], existing: list[dict[str, Any]]) -> vol
     return vol.Schema(fields)
 
 
+def _pool_key(pool_type: str, member_ids: list[str]) -> str:
+    """Identity of a pool: what it fronts, and for whom.
+
+    Two pools over the same members each keep their own counters and each
+    believe they hold the whole allowance, which is the double spend this
+    integration exists to prevent. Order is not part of the identity - the
+    same members in a different preference order are still the same members.
+    """
+    return f"{pool_type}:" + ",".join(sorted(member_ids))
+
+
 def _build_members(
     member_ids: list[str], user_input: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -245,6 +256,10 @@ class AIPoolConfigFlow(ConfigFlow, domain=DOMAIN):
             data = dict(self._draft)
             data[CONF_MEMBERS] = _build_members(self._member_ids, user_input)
             title = data.pop(CONF_NAME)
+            await self.async_set_unique_id(
+                _pool_key(data[CONF_POOL_TYPE], self._member_ids)
+            )
+            self._abort_if_unique_id_configured()
             return self.async_create_entry(title=title, data=data)
 
         return self.async_show_form(
@@ -315,6 +330,30 @@ class AIPoolOptionsFlow(OptionsFlow):
         if user_input is not None:
             data = dict(self._draft)
             data[CONF_MEMBERS] = _build_members(self._member_ids, user_input)
+            # The member set may have changed, so the pool's identity may now
+            # collide with another pool's.
+            key = _pool_key(data[CONF_POOL_TYPE], self._member_ids)
+            clash = next(
+                (
+                    entry
+                    for entry in self.hass.config_entries.async_entries(DOMAIN)
+                    if entry.unique_id == key
+                    and entry.entry_id != self.config_entry.entry_id
+                ),
+                None,
+            )
+            if clash is not None:
+                return self.async_show_form(
+                    step_id="limits",
+                    data_schema=_limits_schema(
+                        self._member_ids, self._draft.get(CONF_MEMBERS, [])
+                    ),
+                    errors={"base": "duplicate_members"},
+                    description_placeholders={"members": ", ".join(self._member_ids)},
+                )
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, unique_id=key
+            )
             return self.async_create_entry(data=data)
 
         return self.async_show_form(

@@ -7,6 +7,7 @@ saturated provider's door.
 """
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState, ConfigSubentry
@@ -15,6 +16,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
@@ -26,6 +28,7 @@ from custom_components.ai_pool.const import (
     CONF_MAX_ATTEMPTS,
     CONF_MEMBERS,
     CONF_POOL_TYPE,
+    CONF_RPM_LIMIT,
     CONF_STRATEGY,
     CONF_TIMEOUT,
     CONF_WEIGHT,
@@ -37,8 +40,11 @@ from custom_components.ai_pool.const import (
     SERVICE_RESET_MEMBER,
     STATUS_COOLDOWN,
     STATUS_DISABLED,
+    STATUS_EXHAUSTED,
     STATUS_HEALTHY,
+    STATUS_THROTTLED,
     STRATEGY_PRIORITY,
+    STRATEGY_ROUND_ROBIN,
 )
 from custom_components.ai_pool.errors import FailureKind
 from custom_components.ai_pool.models import member_model, shared_models
@@ -56,6 +62,8 @@ C = "ai_task.member_c"
 def build_entry(
     members: list[str],
     *,
+    limits: dict[str, int] | None = None,
+    rpm: dict[str, int] | None = None,
     cooldown: int = 300,
     max_attempts: int = 5,
     timeout: float = 0,
@@ -71,7 +79,12 @@ def build_entry(
             CONF_MAX_ATTEMPTS: max_attempts,
             CONF_TIMEOUT: timeout,
             CONF_MEMBERS: [
-                {"entity_id": member, CONF_DAILY_LIMIT: 0, CONF_WEIGHT: 1}
+                {
+                    "entity_id": member,
+                    CONF_DAILY_LIMIT: (limits or {}).get(member, 0),
+                    CONF_RPM_LIMIT: (rpm or {}).get(member, 0),
+                    CONF_WEIGHT: 1,
+                }
                 for member in members
             ],
         },
@@ -515,3 +528,157 @@ async def test_calls_sensor_carries_model_and_strikes(
     attributes = hass.states.get(calls).attributes
     assert attributes["model"] == "models/flash"
     assert attributes["cooldown_strikes"] == 0
+
+
+# --- What the audit found -----------------------------------------------------
+
+
+async def test_yesterdays_traffic_does_not_look_like_exhaustion(
+    hass: HomeAssistant, available
+) -> None:
+    """Day counters are only rolled when the pool is used.
+
+    At 00:00 they still hold yesterday's numbers, and the problem sensor is
+    polled - so it asks this question when nothing has rolled anything.
+    """
+    available(A)
+    entry = build_entry([A])
+    entry.add_to_hass(hass)
+    pool = AIPool(hass, entry)
+    await pool.async_setup()
+    hass.config_entries.async_update_entry(
+        entry,
+        data={
+            **entry.data,
+            CONF_MEMBERS: [
+                {"entity_id": A, CONF_DAILY_LIMIT: 50, CONF_WEIGHT: 1},
+            ],
+        },
+    )
+
+    state = pool.store.state.member(A)
+    state.day = "2000-01-01"
+    state.calls = 50
+
+    member = pool.members[0]
+    assert member.daily_limit == 50
+    # Fifty calls, but not today's fifty.
+    assert pool.member_status(member) == STATUS_HEALTHY
+
+
+async def test_rotation_stays_even_while_a_member_sits_out(
+    hass: HomeAssistant, available
+) -> None:
+    """The cursor must not be taken modulo the members that happen to be up.
+
+    With three members and one in cooldown it used to cycle 0,1,2 over a
+    two-member group, so one member served two calls in three.
+    """
+    available(A, B, C)
+    entry = build_entry([A, B, C], max_attempts=1)
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_STRATEGY: STRATEGY_ROUND_ROBIN}
+    )
+    pool = AIPool(hass, entry)
+    await pool.async_setup()
+
+    # A is out of the running, so B and C should split the traffic evenly.
+    pool.store.state.member(A).cooldown_until = (
+        dt_util.utcnow() + timedelta(hours=1)
+    ).isoformat()
+
+    served: list[str] = []
+
+    async def run(member: str) -> str:
+        served.append(member)
+        return "ok"
+
+    for _ in range(6):
+        await pool.async_execute(run)
+
+    assert served.count(B) == 3, served
+    assert served.count(C) == 3, served
+
+
+async def test_a_member_at_its_rpm_ceiling_is_demoted_not_dropped(
+    hass: HomeAssistant, available
+) -> None:
+    """A declared per-minute limit has to steer something to be worth asking for.
+
+    Like every declared limit it only demotes: the number is the user's
+    estimate, so the member stays in the queue as a last resort.
+    """
+    available(A, B)
+    pool = await make_pool(hass, build_entry([A, B], rpm={A: 2}))
+
+    served: list[str] = []
+
+    async def run(member: str) -> str:
+        served.append(member)
+        return "ok"
+
+    await pool.async_execute(run)
+    await pool.async_execute(run)
+    assert served == [A, A]
+
+    rows = {row["entity_id"]: row for row in pool.snapshot()}
+    assert rows[A]["status"] == STATUS_THROTTLED
+    assert rows[A]["rpm_remaining"] == 0
+
+    # Third call goes to B, which is not throttled.
+    await pool.async_execute(run)
+    assert served[-1] == B
+
+    # And A is still reachable when it is the only one left.
+    hass.states.async_set(B, "unavailable")
+    await pool.async_execute(run)
+    assert served[-1] == A
+
+
+async def test_reset_sees_a_locally_spent_allowance(
+    hass: HomeAssistant, available
+) -> None:
+    """Reporting nothing to reset while the sensor reads exhausted was a lie."""
+    available(A)
+    pool = await make_pool(hass, build_entry([A], limits={A: 2}))
+
+    async def run(member: str) -> str:
+        return "ok"
+
+    await pool.async_execute(run)
+    await pool.async_execute(run)
+    assert pool.snapshot()[0]["status"] == STATUS_EXHAUSTED
+
+    # The member is held back, and the service says so.
+    assert await pool.async_reset_member(A) == [A]
+    # But the allowance is counted from our own counter, so it takes the
+    # counters going with it.
+    assert pool.snapshot()[0]["status"] == STATUS_EXHAUSTED
+
+    assert await pool.async_reset_member(A, clear_counters=True) == [A]
+    row = pool.snapshot()[0]
+    assert row["status"] == STATUS_HEALTHY
+    assert row["calls_today"] == 0
+
+
+async def test_the_duplicate_model_repair_does_not_outlive_the_pool(
+    hass: HomeAssistant, available, monkeypatch
+) -> None:
+    """The issue id embeds the entry id, so a leaked issue is unclearable."""
+    assert await async_setup_component(hass, "homeassistant", {})
+    assert await async_setup_component(hass, "ai_task", {})
+    available(A, B)
+    monkeypatch.setattr(AIPool, "member_model", lambda self, key: "flash")
+
+    entry = build_entry([A, B])
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    issue_id = f"{ISSUE_DUPLICATE_MODEL}_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None

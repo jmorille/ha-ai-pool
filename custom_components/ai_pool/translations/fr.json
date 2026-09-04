@@ -31,6 +31,9 @@
     },
     "error": {
       "no_members": "Choisir au moins un membre."
+    },
+    "abort": {
+      "already_configured": "Un pool de ce type couvre deja exactement ces membres. Deux pools sur les memes membres tiennent chacun leurs compteurs et croient chacun disposer de tout le quota."
     }
   },
   "options": {
@@ -56,7 +59,8 @@
       }
     },
     "error": {
-      "no_members": "Choisir au moins un membre."
+      "no_members": "Choisir au moins un membre.",
+      "duplicate_members": "Un autre pool couvre deja exactement ces membres, et deux pools sur les memes membres depenseraient chacun le quota comme s'ils etaient seuls."
     }
   },
   "selector": {
@@ -112,6 +116,10 @@
         "member": {
           "name": "Membre",
           "description": "L'entite membre a reinitialiser. Laisser vide pour reinitialiser tous les membres du pool."
+        },
+        "clear_counters": {
+          "name": "Effacer aussi les compteurs du jour",
+          "description": "Leve un quota que le pool a compte comme epuise, en oubliant ce que le membre a deja fait aujourd'hui. Coute les metriques du jour pour ce membre, et c'est le seul moyen de le rendre eligible avant minuit."
         }
       }
     }

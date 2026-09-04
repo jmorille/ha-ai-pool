@@ -140,7 +140,7 @@ the calls sensor carries them as attributes:
 | Attribute | Meaning |
 | --------- | ------- |
 | `requests_last_minute` | Requests sent to this member in the last 60 seconds — the RPM dimension, rolling and pruned by age. |
-| `rpm_limit`, `rpm_remaining` | Headroom against the per-minute allowance you declared. `null` when none is declared. |
+| `rpm_limit`, `rpm_remaining` | Headroom against the per-minute allowance you declared. `null` when none is declared. A member at its ceiling reports `status: throttled` and is demoted to last resort — like every declared limit it only reorders, because the number is your estimate. |
 | `requests_today` | Requests sent today, refusals included. |
 | `rpd_remaining` | Headroom against the daily allowance, counted from `requests_today`. |
 | `input_chars_last_minute`, `input_chars_today` | How much input was sent, in characters. |
@@ -230,6 +230,11 @@ member's cooldown, up to an hour. A **success** resets it - nothing else is
 evidence that the provider has recovered - and `cooldown_strikes` on the calls
 sensor explains an unusually long wait.
 
+A refusal that names a spent allowance is read as a quota problem even when it
+arrives as `403`, which some providers do. An authentication verdict is the one
+thing that stops a member from ever being tried again, so evidence of a quota
+outranks a bare status code.
+
 An authentication failure disables a member, and that verdict is persisted: one
 revoked key used to retire a provider for good, with deleting the config entry
 as the only way back. Two things end it now. Reloading the entry re-admits every
@@ -242,7 +247,16 @@ action: ai_pool.reset_member
 data:
   pool: 01M1J3KZ0GTB2EDE0279N6R26J   # the pool's config entry
   member: ai_task.google_ai_task     # optional; omit to reset every member
+  clear_counters: false              # optional; see below
 ```
+
+One allowance the service cannot lift on its own: a member counted as spent
+against the daily limit *you declared*. That verdict comes from the pool's own
+counter, so the only way to make the member eligible again before midnight is
+to forget what it has done today — which is what `clear_counters: true` does,
+at the cost of that member's metrics for the day. The service reports which
+members were actually holding something back, so "nothing to reset" means
+nothing was.
 
 `Download diagnostics` on the config entry returns the same per-member data
 plus the routing policy and the pool-wide counters.
@@ -264,9 +278,11 @@ not a question about today.
   that cannot handle a request raises and the next one is tried.
 - **`stt`** — audio is buffered so a second member can be given the same
   recording. Audio *format* capabilities are the *intersection* across members,
-  because the pipeline encodes once before any member is chosen. Recordings
-  larger than the buffer limit fall back to a single attempt rather than being
-  retried truncated.
+  because the pipeline encodes once before any member is chosen. A recording
+  larger than the buffer limit is clipped to what fits and gets **one attempt
+  with no failover**: handing the same half-sentence to a second member cannot
+  produce a better transcript. The transcript that comes back is of the clipped
+  audio, so it may be incomplete — the warning in the log says so.
 
 ## Development
 
@@ -290,6 +306,28 @@ Assistant version per release, so the matrix selects versions by harness
 version; `scripts/component_requirements.py` then reads the fronted components'
 own dependencies from the installed manifests, which keeps them right across
 those versions.
+
+### Where this integration stands against the quality scale
+
+The manifest declares no `quality_scale`, deliberately. Measured against Home
+Assistant's [integration quality scale](https://developers.home-assistant.io/docs/core/integration-quality-scale/)
+it does not hold bronze, and claiming a tier it does not hold would be worse
+than claiming none. Two rules it knowingly departs from:
+
+- **`has-entity-name`** — the pool entity is named explicitly. `Entity.name`
+  returns `_attr_name` verbatim, and the device name is composed in later and
+  only for the friendly name; the tts manager reads `entity.name` directly and
+  refuses an engine whose name is not set. The alternative that satisfies the
+  rule would name the entity twice over, since the device *is* the pool and
+  carries one primary entity.
+- **`entity-unavailable`** — pool entities stay available and report trouble
+  through a problem sensor and events instead. A pool with no healthy member
+  can still be worth calling: a declared limit is an estimate, and an
+  announcement that fails loudly beats one that never runs.
+
+`reauthentication-flow`, `test-before-configure` and `test-before-setup` do not
+apply — a pool holds no credentials and opens no connection; the member
+integrations own both.
 
 ### Supported Home Assistant versions
 

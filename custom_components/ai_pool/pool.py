@@ -31,6 +31,7 @@ from .const import (
     CONF_STRATEGY,
     CONF_TIMEOUT,
     CONF_WEIGHT,
+    CURSOR_MODULUS,
     DEFAULT_COOLDOWN,
     DEFAULT_DAILY_LIMIT,
     DEFAULT_MAX_ATTEMPTS,
@@ -47,6 +48,7 @@ from .const import (
     STATUS_DISABLED,
     STATUS_EXHAUSTED,
     STATUS_HEALTHY,
+    STATUS_THROTTLED,
     STATUS_UNAVAILABLE,
 )
 from .errors import FailureKind, Verdict, classify
@@ -163,24 +165,45 @@ class AIPool:
             )
             await self.store.async_save()
 
-    async def async_reset_member(self, member: str | None = None) -> list[str]:
+    async def async_reset_member(
+        self, member: str | None = None, *, clear_counters: bool = False
+    ) -> list[str]:
         """Clear the penalties on one member, or on all of them.
 
-        Returns the members that were actually holding a penalty, so a caller
-        can tell "reset three members" from "there was nothing to reset".
+        Returns the members that were actually holding something back, so a
+        caller can tell "reset three members" from "there was nothing to
+        reset". A member spent against its *declared* daily limit counts as
+        held: that verdict comes from our own counter, and reporting nothing to
+        reset while the sensor reads exhausted would be a lie.
+
+        Lifting that one requires ``clear_counters``, because the only way to
+        make the member eligible again today is to forget how much it has
+        already done - which costs the day's metrics for that member.
         """
-        targets = [member] if member else [config.entity_id for config in self.members]
+        by_id = {config.entity_id: config for config in self.members}
+        targets = [member] if member else list(by_id)
+        today = self.store.today()
         reset: list[str] = []
         for entity_id in targets:
             state = self.store.state.member(entity_id)
+            config = by_id.get(entity_id)
+            spent = bool(
+                config
+                and config.daily_limit
+                and state.day == today
+                and state.calls >= config.daily_limit
+            )
             if (
                 state.disabled_reason
                 or state.cooldown_until
                 or state.blocked_until_day
                 or state.cooldown_strikes
+                or spent
             ):
                 reset.append(entity_id)
             state.clear_penalties()
+            if clear_counters:
+                state.reset_day(today)
         await self.store.async_save()
         self._notify()
         return reset
@@ -220,6 +243,22 @@ class AIPool:
             }
         )
 
+    @property
+    def _model_issue_id(self) -> str:
+        """Issue id for this entry's duplicate-model repair."""
+        return f"{ISSUE_DUPLICATE_MODEL}_{self.entry.entry_id}"
+
+    @callback
+    def async_clear_issues(self) -> None:
+        """Drop this pool's repairs.
+
+        Called when the entry unloads or is removed. The issue id embeds the
+        entry id, so an issue left behind by a deleted pool can never be
+        matched again: it would sit in Repairs for good, describing a pool that
+        no longer exists, with "Ignore" as the user's only recourse.
+        """
+        ir.async_delete_issue(self.hass, DOMAIN, self._model_issue_id)
+
     @callback
     def async_check_models(self) -> None:
         """Raise or clear a repair issue about members sharing a model.
@@ -228,7 +267,7 @@ class AIPool:
         healthy in every sensor right up to the moment one provider-side
         refusal takes all of them out together.
         """
-        issue_id = f"{ISSUE_DUPLICATE_MODEL}_{self.entry.entry_id}"
+        issue_id = self._model_issue_id
         duplicates = self.duplicate_models()
         if not duplicates:
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
@@ -253,7 +292,16 @@ class AIPool:
     # --- Health -------------------------------------------------------------
 
     def member_status(self, member: MemberConfig) -> str:
-        """Return the current health of a member."""
+        """Return the current health of a member.
+
+        Read-only, and correct without anything having rolled the day first.
+        Day counters are only zeroed when the pool is used, so at 00:00 they
+        still hold yesterday's numbers: every check below therefore either
+        compares against today's date or ignores a counter whose window has
+        passed. Reporting a member exhausted because of yesterday's traffic
+        would raise a false alarm on the problem sensor, which is polled and so
+        asks this question when nothing else is happening.
+        """
         state = self.store.state.member(member.entity_id)
 
         if state.disabled_reason:
@@ -270,8 +318,19 @@ class AIPool:
         if state.blocked_until_day and state.blocked_until_day > self.store.today():
             return STATUS_EXHAUSTED
 
-        if member.daily_limit and state.calls >= member.daily_limit:
+        if (
+            member.daily_limit
+            and state.day == self.store.today()
+            and state.calls >= member.daily_limit
+        ):
             return STATUS_EXHAUSTED
+
+        # Throttled rather than exhausted: the allowance is intact, the pace is
+        # not. Like every declared limit this only demotes - the member stays
+        # in the queue as a last resort, because the number is the user's
+        # estimate and a real refusal is always detected from the error.
+        if member.rpm_limit and state.requests_last_minute() >= member.rpm_limit:
+            return STATUS_THROTTLED
 
         return STATUS_HEALTHY
 
@@ -390,6 +449,7 @@ class AIPool:
         *,
         description: str = "request",
         size: int = 0,
+        attempt_limit: int | None = None,
     ) -> T:
         """Run ``run`` against pool members until one succeeds.
 
@@ -400,6 +460,10 @@ class AIPool:
         ``size`` is how large the request is in characters. Providers meter
         input tokens, which Home Assistant never reports back, so the platforms
         pass what they do know and the metrics call it what it is.
+
+        ``attempt_limit`` caps the members tried below the pool's configured
+        maximum, for a caller that cannot honestly be retried - a recording
+        clipped to fit the retry buffer being the one case.
         """
         self.store.roll_day()
         preferred, last_resort = self._candidates()
@@ -410,8 +474,14 @@ class AIPool:
                 f"Pool {self.entry.title}: no usable member for {description}"
             )
 
-        self.store.state.cursor = (self.store.state.cursor + 1) % max(len(queue), 1)
+        # Advanced by one, independently of the queue length. Taking it modulo
+        # the queue used to skew the rotation the moment a member sat out: with
+        # three members and one in cooldown the cursor cycled 0,1,2 over a
+        # two-member group, so offsets ran 0,1,0,0,1,0 and one member served
+        # two calls in three.
+        self.store.state.cursor = (self.store.state.cursor + 1) % CURSOR_MODULUS
 
+        limit = self.max_attempts if attempt_limit is None else max(attempt_limit, 1)
         attempts = 0
         last_error: BaseException | None = None
         # Models that just refused for capacity. Asking a second member backed
@@ -419,7 +489,7 @@ class AIPool:
         spent_models: set[str] = set()
 
         for member in queue:
-            if attempts >= self.max_attempts:
+            if attempts >= limit:
                 break
             model = self.member_model(member.entity_id)
             if model and model in spent_models:

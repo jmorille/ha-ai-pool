@@ -14,3 +14,8 @@ reset_member:
             - domain: conversation
             - domain: tts
             - domain: stt
+    clear_counters:
+      required: false
+      default: false
+      selector:
+        boolean:

@@ -20,10 +20,16 @@ class AIPoolEntity(Entity):
         self.pool = pool
         self._entry = entry
         self._attr_unique_id = entry.entry_id
-        # Named explicitly rather than borrowing the device name through
-        # has_entity_name: the tts manager reads entity.name directly and
-        # refuses an engine whose name is None, which is what the device-name
-        # convention leaves it as.
+        # Named explicitly, which knowingly departs from the has-entity-name
+        # convention. `Entity.name` returns `_attr_name` verbatim; composing it
+        # with the device name happens later, in `_async_calculate_state`, and
+        # only for the friendly name in the state machine. So the usual
+        # has_entity_name + `_attr_name = None` pairing leaves `entity.name` as
+        # None - and the tts manager reads `entity.name` directly, refusing an
+        # engine whose name is not set. The alternative that satisfies both, a
+        # translation key, would name this entity twice over: the device is the
+        # pool and carries exactly one primary entity, so "TTS Pool" would
+        # present itself as "TTS Pool <something>".
         self._attr_name = entry.title
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},

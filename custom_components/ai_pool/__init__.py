@@ -13,6 +13,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    ATTR_CLEAR_COUNTERS,
     ATTR_MEMBER,
     ATTR_POOL,
     CONF_POOL_TYPE,
@@ -40,6 +41,7 @@ RESET_MEMBER_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_POOL): cv.string,
         vol.Optional(ATTR_MEMBER): cv.entity_id,
+        vol.Optional(ATTR_CLEAR_COUNTERS, default=False): cv.boolean,
     }
 )
 
@@ -78,7 +80,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"member": member, "pool": entry.title},
             )
 
-        reset = await pool.async_reset_member(member)
+        reset = await pool.async_reset_member(
+            member, clear_counters=call.data[ATTR_CLEAR_COUNTERS]
+        )
         _LOGGER.info(
             "Pool %s: cleared penalties on %s",
             entry.title,
@@ -110,6 +114,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AIPoolConfigEntry) -> bo
 
 async def async_unload_entry(hass: HomeAssistant, entry: AIPoolConfigEntry) -> bool:
     """Unload a config entry."""
+    if isinstance(pool := getattr(entry, "runtime_data", None), AIPool):
+        pool.async_clear_issues()
     return await hass.config_entries.async_unload_platforms(entry, _platforms(entry))
 
 
@@ -123,6 +129,7 @@ async def async_reload_entry(hass: HomeAssistant, entry: AIPoolConfigEntry) -> N
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Delete persisted counters along with the entry."""
+    """Delete persisted counters and repairs along with the entry."""
     pool = AIPool(hass, entry)
+    pool.async_clear_issues()
     await pool.async_remove()

@@ -31,6 +31,9 @@
     },
     "error": {
       "no_members": "Pick at least one member."
+    },
+    "abort": {
+      "already_configured": "A pool of that type already fronts exactly these members. Two pools over the same members each keep their own counters and each believe they hold the whole allowance."
     }
   },
   "options": {
@@ -56,7 +59,8 @@
       }
     },
     "error": {
-      "no_members": "Pick at least one member."
+      "no_members": "Pick at least one member.",
+      "duplicate_members": "Another pool already fronts exactly these members, and two pools over the same members would each spend the allowance as if they were alone."
     }
   },
   "selector": {
@@ -112,6 +116,10 @@
         "member": {
           "name": "Member",
           "description": "The member entity to reset. Leave empty to reset every member of the pool."
+        },
+        "clear_counters": {
+          "name": "Also clear today's counters",
+          "description": "Lift an allowance the pool counted as spent, by forgetting how much the member has done today. Costs that member's metrics for the day, and is the only way to make it eligible again before midnight."
         }
       }
     }

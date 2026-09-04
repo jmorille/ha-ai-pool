@@ -56,12 +56,20 @@ DEFAULT_TIMEOUT: Final = 120
 # Ceiling for the doubling cooldown, so a provider having a bad day is retried
 # hourly rather than never.
 MAX_COOLDOWN: Final = 3600
+# The round-robin cursor advances independently of how many members are usable
+# right now, so rotation stays even while some sit out. It wraps on the lowest
+# common multiple of 1..10, which divides every group size a sane pool can
+# have, so wrapping never lands two calls on the same member.
+CURSOR_MODULUS: Final = 2520
 # Audio is buffered so a failed member can be retried with the same recording.
 DEFAULT_STT_BUFFER_LIMIT: Final = 8 * 1024 * 1024
 
 # --- Member health ----------------------------------------------------------
 STATUS_HEALTHY: Final = "healthy"
 STATUS_COOLDOWN: Final = "cooldown"
+# Pace, not allowance: the member is inside its daily quota but at its
+# per-minute ceiling, so it is demoted rather than spent.
+STATUS_THROTTLED: Final = "throttled"
 STATUS_EXHAUSTED: Final = "exhausted"
 STATUS_DISABLED: Final = "disabled"
 STATUS_UNAVAILABLE: Final = "unavailable"
@@ -75,6 +83,7 @@ EVENT_EXHAUSTED: Final = f"{DOMAIN}_exhausted"
 SERVICE_RESET_MEMBER: Final = "reset_member"
 ATTR_POOL: Final = "pool"
 ATTR_MEMBER: Final = "member"
+ATTR_CLEAR_COUNTERS: Final = "clear_counters"
 
 # --- Repairs ----------------------------------------------------------------
 ISSUE_DUPLICATE_MODEL: Final = "duplicate_model"

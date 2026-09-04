@@ -73,21 +73,28 @@ class Verdict:
 
 
 # Ordered most-specific first: the first pattern that matches wins.
+#
+# QUOTA is tested before AUTH deliberately, and the order is load-bearing.
+# Google returns a spent allowance as 403 PERMISSION_DENIED as readily as 429,
+# while AUTH carries the harshest consequence in the integration: a disabled
+# member is never attempted again, not even as a last resort. Evidence of a
+# spent allowance therefore has to outrank a bare status code, or one busy
+# afternoon retires a working provider until somebody notices.
 _PATTERNS: tuple[tuple[FailureKind, re.Pattern[str]], ...] = (
+    (
+        FailureKind.QUOTA,
+        re.compile(
+            r"\b429\b|resource[ _]exhausted|insufficient[ _]quota|quota"
+            r"|rate[ _-]?limit|too[ _]many[ _]requests|billing",
+            re.IGNORECASE,
+        ),
+    ),
     (
         FailureKind.AUTH,
         re.compile(
             r"\b401\b|\b403\b|unauthori[sz]ed|permission[ _]denied|forbidden"
             r"|invalid[ _]api[ _]key|api[ _]key[ _]not[ _]valid|expired[ _]token"
             r"|authentication",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        FailureKind.QUOTA,
-        re.compile(
-            r"\b429\b|resource[ _]exhausted|insufficient[ _]quota|quota"
-            r"|rate[ _-]?limit|too[ _]many[ _]requests|billing",
             re.IGNORECASE,
         ),
     ),
