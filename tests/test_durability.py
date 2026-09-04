@@ -171,7 +171,9 @@ async def test_the_day_rolls_on_its_own_at_midnight(
     Nothing rolled the day except using the pool, and reading a sensor is not
     using it - so the midnight trigger is what makes a display right.
     """
-    freezer.move_to("2026-09-04 10:00:00+02:00")
+    # Times in UTC and a full day of travel: the test instance does not run in
+    # the same timezone as the deployment, and the day that matters is local.
+    freezer.move_to("2026-09-04 10:00:00+00:00")
     available(A)
     entry = build_entry([A])
     entry.add_to_hass(hass)
@@ -185,8 +187,8 @@ async def test_the_day_rolls_on_its_own_at_midnight(
     await pool.async_execute(run)
     assert pool.snapshot()[0].calls_today == 1
 
-    # Cross midnight without touching the pool.
-    freezer.move_to("2026-09-05 00:00:30+02:00")
+    # Cross one local midnight without touching the pool, wherever it falls.
+    freezer.move_to("2026-09-05 10:00:01+00:00")
     async_fire_time_changed(hass, dt_util.utcnow())
     await hass.async_block_till_done()
 
@@ -198,7 +200,7 @@ async def test_a_cooldown_expires_without_the_pool_being_used(
     hass: HomeAssistant, available, freezer: FrozenDateTimeFactory
 ) -> None:
     """Member health has to be right when nothing is calling the pool."""
-    freezer.move_to("2026-09-04 10:00:00+02:00")
+    freezer.move_to("2026-09-04 10:00:00+00:00")
     available(A, B)
     pool = await make_pool(hass, build_entry([A, B]))
 

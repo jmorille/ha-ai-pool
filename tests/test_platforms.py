@@ -106,7 +106,7 @@ async def setup_pool(
 def status_of(entry: MockConfigEntry, entity_id: str) -> str:
     """Look up one member's status in the pool snapshot."""
     rows = {row.entity_id: row for row in entry.runtime_data.snapshot()}
-    return rows[entity_id]["status"]
+    return rows[entity_id].status
 
 
 # --- ai_task ----------------------------------------------------------------

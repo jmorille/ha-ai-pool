@@ -145,11 +145,15 @@ async def test_options_flow_updates_members_and_policy(
         },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_STRATEGY] == STRATEGY_LEAST_USED
-    assert result["data"][CONF_COOLDOWN] == 60
-    assert len(result["data"][CONF_MEMBERS]) == 2
+    # The options flow writes back into `data` rather than leaving a second
+    # copy of the configuration in `options`, so `data` is the whole truth.
+    assert result["data"] == {}
+    assert entry.options == {}
+    assert entry.data[CONF_STRATEGY] == STRATEGY_LEAST_USED
+    assert entry.data[CONF_COOLDOWN] == 60
+    assert len(entry.data[CONF_MEMBERS]) == 2
     # The pool type is not editable and must survive the round trip.
-    assert result["data"][CONF_POOL_TYPE] == "ai_task"
+    assert entry.data[CONF_POOL_TYPE] == "ai_task"
 
 
 async def test_options_flow_keeps_existing_limits_as_defaults(
